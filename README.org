@@ -1,0 +1,49 @@
+* projel
+
+Enhanced Project.
+
+** Installation
+
+Emacs >= 28.1 is required.
+
+*** Manual
+
+Ensure that you have installed required dependencies:
+- ~project~ >= 0.9.8
+
+Download the source code and put it wherever you like, e.g. into =~/.emacs.d/projel/=
+
+#+begin_src shell :eval no
+git clone https://github.com/KarimAziev/projel.git ~/.emacs.d/projel/
+#+end_src
+
+Add the downloaded directory to the load path:
+
+#+begin_src elisp :eval no
+(add-to-list 'load-path "~/.emacs.d/projel/")
+(require 'project)
+
+(projel-enable-project-override)
+#+end_src
+
+#+begin_src elisp :eval no
+(use-package projel
+  :after (project)
+  :demand t
+  :straight (projel
+             :repo "KarimAziev/projel"
+             :type git
+             :host github)
+  :bind ((:map projel-minibuffer-map
+               ("C-j" . projel-preview-file)
+               ("C-c C-o" . projel-find-file-other-window)))
+	:config (projel-enable-project-override))
+#+end_src
+
+** Keymaps
+
+*** ~projel-minibuffer-map~
+| Key     | Command                       | 
+|---------+-------------------------------|
+| C-j     | projel-preview-file           |
+| C-c C-o | projel-find-file-other-window |
