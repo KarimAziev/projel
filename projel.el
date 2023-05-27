@@ -437,6 +437,12 @@ completion UI highly compatible with it, like Icomplete."
 					 (delete ".git"
 									 (directory-files dir nil
 																		directory-files-no-dot-files-regexp)))))
+
+(defun projel--kill-preview-buffer ()
+	"Preview FILE in other window."
+	(when (buffer-live-p (get-buffer "*km-project-preview*"))
+		(kill-buffer (get-buffer "*km-project-preview*"))))
+
 (defun projel--preview-file (file)
 	"Preview FILE in other window."
 	(when (and file (file-exists-p file))
@@ -809,11 +815,12 @@ otherwise use the parsing routines from the json library."
 	"Setup `projel-minibuffer-map' in minibuffer and possible allow file preview.
 See `projel-auto-preview-delay'."
 	(when (minibufferp)
-		(if projel-auto-preview-delay
-				(add-hook 'pre-command-hook
-									#'projel-auto-schedule-preview nil t)
-			(remove-hook 'pre-command-hook
-									 #'projel-auto-schedule-preview t))
+		(remove-hook 'pre-command-hook
+								 #'projel-auto-schedule-preview t)
+		(when projel-auto-preview-delay
+			(add-hook 'minibuffer-exit-hook #'projel--kill-preview-buffer nil t)
+			(add-hook 'pre-command-hook
+								#'projel-auto-schedule-preview nil t))
 		(use-local-map
 		 (make-composed-keymap projel-minibuffer-map
 													 (current-local-map)))))
