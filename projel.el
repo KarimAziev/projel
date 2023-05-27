@@ -40,6 +40,13 @@
 	:type '(repeat directory)
 	:group 'projel)
 
+(defcustom projel-auto-preview-delay 0.5
+	"Number of seconds to wait before show file preview in minibuffer.
+If nil, disable auto preview."
+	:type '(radio (const :tag "Not set" nil)
+								(number :tag "Seconds"))
+	:group 'projel)
+
 (defvar projel-file-name-indicators
   '((("dune-project")
 		 . "Dune-Project")
@@ -244,6 +251,10 @@
 		(("src")
 		 . "Src")))
 
+(defcustom projel-choose-dir-label "... (choose a dir)"
+	"A text to show in minibuffer completions to select other project directory."
+	:group 'projel
+	:type 'string)
 
 (defun projel-minibuffer-get-metadata ()
 	"Return current minibuffer completion metadata."
@@ -287,6 +298,7 @@
       (cons
        (completion-metadata-get (projel-minibuffer-get-metadata) 'category)
        all))))
+
 
 (defun projel-minibuffer-default-top-minibuffer-completion ()
 	"Target the top completion candidate in the minibuffer.
@@ -354,17 +366,20 @@ completion UI highly compatible with it, like Icomplete."
     (progn (run-with-timer 0.1 nil action current)
            (abort-minibuffers))))
 
-(defvar projel-project-root-cache (make-hash-table :test 'equal)
-  "Cached value of function `projel-project-root`.")
-
 (defun projel-current-minibuffer-file ()
 	"Return absolute filename for current completion candidate."
 	(require 'project)
-	(pcase-let ((`(,_category . ,current)
-               (projel-minibuffer-current-candidate)))
-    (if (file-name-absolute-p current)
-        current
-      (expand-file-name current (project-root (project-current))))))
+	(pcase-let* ((`(,_category . ,current)
+								(projel-minibuffer-current-candidate))
+							 (file
+								(if (or (file-name-absolute-p current)
+												(string= current projel-choose-dir-label))
+										current
+									(expand-file-name current
+																		(project-root (project-current))))))
+		(when (file-exists-p file)
+			file)))
+
 
 ;;;###autoload
 (defun projel-find-file-other-window ()
@@ -393,7 +408,7 @@ completion UI highly compatible with it, like Icomplete."
 	(when (minibufferp)
     (let ((cand (projel-current-minibuffer-file))
           (curr projel-preview-candidate))
-      (when (not (equal cand curr))
+      (when (and cand (not (equal cand curr)))
         (setq projel-preview-candidate cand)
 				(projel--preview-file projel-preview-candidate)))))
 
@@ -424,31 +439,32 @@ completion UI highly compatible with it, like Icomplete."
 																		directory-files-no-dot-files-regexp)))))
 (defun projel--preview-file (file)
 	"Preview FILE in other window."
-	(with-minibuffer-selected-window
-		(let ((buffer (get-buffer-create "*km-project-preview*")))
-			(with-current-buffer buffer
-				(with-current-buffer-window buffer
-						buffer
-						(cons 'display-buffer-in-side-window
-									'((window-height . fit-window-to-buffer)))
-					(lambda (window _value)
-						(with-selected-window window
-							(setq buffer-read-only t)
-							(let ((inhibit-read-only t))
-								(unwind-protect
-										(read-key-sequence "")
-									(quit-restore-window window 'kill)))))
-					(if (file-directory-p file)
-							(insert
-							 (string-join
-							  (projel-get-project-top-root-files file)
-								"\n"))
-						(insert-file-contents file)
-						(let ((buffer-file-name file))
-							(delay-mode-hooks (set-auto-mode)
-																(font-lock-ensure)))
-						(setq header-line-format
-									(abbreviate-file-name file))))))))
+	(when (and file (file-exists-p file))
+		(with-minibuffer-selected-window
+			(let ((buffer (get-buffer-create "*km-project-preview*")))
+				(with-current-buffer buffer
+					(with-current-buffer-window buffer
+							buffer
+							(cons 'display-buffer-in-side-window
+										'((window-height . fit-window-to-buffer)))
+						(lambda (window _value)
+							(with-selected-window window
+								(setq buffer-read-only t)
+								(let ((inhibit-read-only t))
+									(unwind-protect
+											(read-key-sequence "")
+										(quit-restore-window window 'kill)))))
+						(if (file-directory-p file)
+								(insert
+								 (string-join
+									(projel-get-project-top-root-files file)
+									"\n"))
+							(insert-file-contents file)
+							(let ((buffer-file-name file))
+								(delay-mode-hooks (set-auto-mode)
+																	(font-lock-ensure)))
+							(setq header-line-format
+										(abbreviate-file-name file)))))))))
 
 (defun projel-expand-wildcards (pattern dir depth &optional full regexp)
 	"Return list of files that matches PATTERN in DIR at max DEPTH.
@@ -515,16 +531,7 @@ Default value for DIR is home directory."
 (defun projel-get-dirs-for-cloning ()
 	"Return list of git parents directories."
 	(seq-uniq (mapcar #'file-name-parent-directory
-										(projel-find-projects))))
-
-(defun projel-find-projects (&optional depth)
-	"Search for git projects in home directory at DEPTH."
-	(delq nil
-				(append
-				 (when (fboundp 'xdg-config-home)
-					 (list (abbreviate-file-name
-									(file-name-as-directory (xdg-config-home)))))
-				 (projel-get-projects depth))))
+										(projel-get-projects))))
 
 
 
@@ -549,6 +556,7 @@ Default value for DIR is home directory."
            (require 'npmjs)
            (when (fboundp 'npmjs-run-script)
              (npmjs-run-script))))))
+
 
 ;;;###autoload
 (defun projel-completing-read (prompt choices)
@@ -582,52 +590,73 @@ Default value for DIR is home directory."
                                    (current-local-map)))))
       (completing-read prompt node-modules-files))))
 
+(defun projel-find-readme (dir)
+	"Return list of readme files in DIR."
+	(let* ((tramp-archive-enabled nil)
+				 (score-alist '(("org" . 3)
+												("mdx" . 2)
+												("md" . 1)))
+				 (readme-files (or (directory-files dir t "README\\.[a-z]+" t)
+													 (directory-files dir t "readme\\.[a-z]+" t))))
+		(seq-sort-by (lambda (it)
+									 (or (cdr (assoc-string (file-name-extension (downcase it))
+																					score-alist))
+											 -1))
+								 #'>
+								 readme-files)))
 
-(defun projel-readme-annotation (file)
-	"Extract annotation from org or markdown FILE."
-	(with-temp-buffer
-		(erase-buffer)
-		(insert-file-contents file)
-		(goto-char (point-min))
-		(let* ((heading-re
-						(pcase (file-name-extension file)
-							("org" "^\\(\\*+\\)\\(?: +\\(.*?\\)\\)?[ \t]*$")
-							((or "md" "mdx" "mkdn")
-							 "^\\(?:\\(?1:[^\r\n\t -].*\\)\n\\(?:\\(?2:=+\\)\\|\\(?3:-+\\)\\)\\|\\(?4:#+[ \t]+\\)\\(?5:.*?\\)\\(?6:[ \t]*#*\\)\\)$")
-							(_
-							 "^\\(?:\\(?1:[^\r\n\t -].*\\)\n\\(?:\\(?2:=+\\)\\|\\(?3:-+\\)\\)\\|\\(?4:#+[ \t]+\\)\\(?5:.*?\\)\\(?6:[ \t]*#*\\)\\)$")))
-					 (title
-						(save-excursion
-							(when (re-search-forward
-										 heading-re
-										 nil
-										 t
-										 1)
-								(match-string-no-properties 0))))
-					 (beg
-						(progn (re-search-forward
-										"^\\(?:\\(?1:[^\r\n\t -].*\\)\n\\(?:\\(?2:=+\\)\\|\\(?3:-+\\)\\)\\|\\(?4:#+[ \t]+\\)\\(?5:.*?\\)\\(?6:[ \t]*#*\\)\\)$"
-										nil t 1)
-									 (when (re-search-forward
-													"^[\s]?+[`]?[a-z]"
-													nil
-													t
-													1)
-										 (match-beginning 0))))
-					 (end
-						(when beg
-							(goto-char beg)
-							(forward-sentence)))
-					 (descr
-						(when (and beg end)
-							(buffer-substring-no-properties
-							 beg
-							 end))))
-			(mapconcat (apply-partially
-									#'replace-regexp-in-string
-									"[\n\f\r]+" " ")
-								 (delq nil (list (or descr title)))
-								 " "))))
+(defun projel-readme-annotation (files)
+	"Extract annotation from FILES."
+	(let ((result))
+		(while (and files (not result))
+			(let ((file (pop files)))
+				(setq result
+							(with-temp-buffer
+								(erase-buffer)
+								(insert-file-contents file)
+								(goto-char (point-min))
+								(let* ((heading-re
+												(pcase (file-name-extension file)
+													("org" "^\\(\\*+\\)\\(?: +\\(.*?\\)\\)?[ \t]*$")
+													((or "md" "mdx" "mkdn")
+													 "^\\(?:\\(?1:[^\r\n\t -].*\\)\n\\(?:\\(?2:=+\\)\\|\\(?3:-+\\)\\)\\|\\(?4:#+[ \t]+\\)\\(?5:.*?\\)\\(?6:[ \t]*#*\\)\\)$")
+													(_
+													 "^\\(?:\\(?1:[^\r\n\t -].*\\)\n\\(?:\\(?2:=+\\)\\|\\(?3:-+\\)\\)\\|\\(?4:#+[ \t]+\\)\\(?5:.*?\\)\\(?6:[ \t]*#*\\)\\)$")))
+											 (title
+												(save-excursion
+													(when (re-search-forward
+																 heading-re
+																 nil
+																 t
+																 1)
+														(match-string-no-properties 0))))
+											 (beg
+												(progn (re-search-forward
+																"^\\(?:\\(?1:[^\r\n\t -].*\\)\n\\(?:\\(?2:=+\\)\\|\\(?3:-+\\)\\)\\|\\(?4:#+[ \t]+\\)\\(?5:.*?\\)\\(?6:[ \t]*#*\\)\\)$"
+																nil t 1)
+															 (when (re-search-forward
+																			"^[\s]?+[`]?[a-z]"
+																			nil
+																			t
+																			1)
+																 (match-beginning 0))))
+											 (end
+												(when beg
+													(goto-char beg)
+													(forward-sentence)))
+											 (descr
+												(when (and beg end)
+													(buffer-substring-no-properties
+													 beg
+													 end)))
+											 (parts (delq nil (list (or descr title)))))
+									(when parts
+										(mapconcat (apply-partially
+																#'replace-regexp-in-string
+																"[\n\f\r]+" " ")
+															 (delq nil (list (or descr title)))
+															 " ")))))))
+		result))
 
 (defvar projel-file-extensions-indicators
 	'(("gradle" . "Java (Gradle)")
@@ -661,6 +690,7 @@ otherwise use the parsing routines from the json library."
 				(let ((json-array-type 'vector)
 							(json-object-type 'alist))
 					(json-read-from-string content))))))
+
 
 (defun projel-get-project-description (project)
 	"Return PROJECT descriptions."
@@ -700,52 +730,37 @@ otherwise use the parsing routines from the json library."
 																 found)
 																projel-file-extensions-indicators)))
 														 'face 'success)))
-												 (when-let ((readme
-																		 (car
-																			(or (member "README.md"
-																									files)
-																					(member "README.MD"
-																									files)
-																					(member "readme.md"
-																									files)
-																					(member "readme.mkdn"
-																									files)
-																					(member "README.mkdn"
-																									files)
-																					(member "README.org"
-																									files)
-																					(member "readme.org"
-																									files)))))
-													 (projel-readme-annotation (expand-file-name
-																											readme project)))
-												 (when-let* ((package-json
-																			(when (file-exists-p
-																						 (concat
-																							project
-																							"package.json"))
-																				(ignore-errors (projel-read-json
-																												(concat
-																												 project
-																												 "package.json")))))
-																		 (description (alist-get
-																									 'description
-																									 package-json)))
-													 (string-join
-														(remove nil
-																		(list
-																		 (if-let ((vers
-																							 (alist-get 'version
-																													package-json)))
-																				 (concat (or
-																									(alist-get 'name
-																														 package-json)
-																									"")
-																								 "@"
-																								 vers)
-																			 (alist-get 'name
-																									package-json))
-																		 description))
-														" ")))))
+												 (or
+													(when-let* ((package-json
+																			 (when (file-exists-p
+																							(concat
+																							 project
+																							 "package.json"))
+																				 (ignore-errors (projel-read-json
+																												 (concat
+																													project
+																													"package.json")))))
+																			(description (alist-get
+																										'description
+																										package-json)))
+														(string-join
+														 (remove nil
+																		 (list
+																			(if-let* ((vers
+																								 (alist-get 'version
+																														package-json))
+																								(name (alist-get 'name
+																																 package-json)))
+																					(concat
+																					 name
+																					 "@"
+																					 vers
+																					 " "
+																					 description)
+																				description)))
+														 " "))
+													(when-let ((readmes (projel-find-readme project)))
+														(projel-readme-annotation readmes))))))
 		 " ")))
 
 (defvar projel-annotations-cache nil)
@@ -754,6 +769,7 @@ otherwise use the parsing routines from the json library."
 	"Annotate project DIRECTORY using `projel-annotations-cache'."
 	(unless projel-annotations-cache
 		(setq projel-annotations-cache (projel-get-annotated-project-alist)))
+	
 	(if-let ((description (cdr (assoc-string
 															directory
 															projel-annotations-cache))))
@@ -765,16 +781,20 @@ otherwise use the parsing routines from the json library."
 							description)
 		""))
 
-(defun projel-get-annotated-project-alist ()
-	"Read project."
-	(project--ensure-read-project-list)
-	(let* ((projects (delete-dups (append (projel-find-projects)
+(defun projel-get-annotations-alist ()
+	"Return alist of projects and annotations."
+	(let* ((projects (delete-dups (append (projel-get-projects)
 																				(mapcar #'car project--list))))
 				 (annotf (lambda (str)
 									 (cons str (projel-get-project-description str)))))
-		(setq projel-annotations-cache (mapcar annotf projects))
-		(setq project--list
-					projel-annotations-cache)))
+		(mapcar annotf projects)))
+
+(defun projel-get-annotated-project-alist ()
+	"Read project."
+	(project--ensure-read-project-list)
+	(setq projel-annotations-cache (projel-get-annotations-alist))
+	(setq project--list
+				projel-annotations-cache))
 
 (defun projel-project--file-completion-table (all-files)
 	"Completions table for project. ALL-FILES is collection to complete."
@@ -785,32 +805,41 @@ otherwise use the parsing routines from the json library."
 					(t
 					 (complete-with-action action all-files string pred)))))
 
-
+(defun projel-setup-minibuffer ()
+	"Setup `projel-minibuffer-map' in minibuffer and possible allow file preview.
+See `projel-auto-preview-delay'."
+	(when (minibufferp)
+		(if projel-auto-preview-delay
+				(add-hook 'pre-command-hook
+									#'projel-auto-schedule-preview nil t)
+			(remove-hook 'pre-command-hook
+									 #'projel-auto-schedule-preview t))
+		(use-local-map
+		 (make-composed-keymap projel-minibuffer-map
+													 (current-local-map)))))
 
 (defun projel-completing-read-strict (&rest args)
 	"Apply `project--completing-read-strict' with ARGS with preview and keymap.
 \\<projel-minibuffer-map>\\{projel-minibuffer-map}."
 	(minibuffer-with-setup-hook
-			(lambda ()
-				(when (minibufferp)
-					(add-hook 'pre-command-hook #'projel-auto-schedule-preview nil t)
-					(use-local-map
-					 (make-composed-keymap projel-minibuffer-map
-																 (current-local-map)))))
+		  #'projel-setup-minibuffer
 		(apply #'project--completing-read-strict args)))
 
 (defun projel-project--read-file-cpd-relative (&rest args)
 	"Apply `project--read-file-cpd-relative' with ARGS with preview and keymap.
 \\<projel-minibuffer-map>\\{projel-minibuffer-map}."
 	(minibuffer-with-setup-hook
-			(lambda ()
-				(when (minibufferp)
-					(add-hook 'pre-command-hook #'projel-auto-schedule-preview nil t)
-					(use-local-map
-					 (make-composed-keymap projel-minibuffer-map
-																 (current-local-map)))))
+			#'projel-setup-minibuffer
 		(apply #'project--read-file-cpd-relative args)))
 
+(defun projel-file-mod-time (file)
+	"Return modification time of FILE as seconds."
+	(when-let ((attrs (and file
+												 (file-exists-p file)
+												 (file-attributes
+													file))))
+		(time-to-seconds (file-attribute-modification-time
+											attrs))))
 
 (defun projel-completing-read-project (&rest _)
 	"Prompt the user for a directory that is one of the known project roots.
@@ -820,45 +849,45 @@ It's also possible to enter an arbitrary directory not in the list."
 	(unless projel-annotations-cache
 		(projel-get-annotated-project-alist))
 	(let* ((dir-choice "... (choose a dir)")
-				 (alist (append (list (cons dir-choice "Other Project"))
-												projel-annotations-cache))
+				 (alist (append projel-annotations-cache
+												(list (cons dir-choice "Other Project"))))
 				 (annotf (lambda (str)
 									 (concat (propertize " " 'display
 																			 (list 'space :align-to 51))
 													 (or (cdr
 																(assoc-string str alist))
 															 ""))))
-				 (cycle-sort-fn (lambda (it) it))
-				 (display-sort-fn (lambda (it)
-														(seq-sort-by #'length '< it)))
+				 (group-function
+					(lambda (str &optional transform)
+						(pcase str
+							((guard (string= str dir-choice))
+							 (when transform str))
+							(_
+							 (if (not transform)
+									 (propertize (abbreviate-file-name (file-name-parent-directory
+																											str))
+															 'face
+															 'success)
+								 (file-name-nondirectory (directory-file-name str)))))))
 				 (pr-dir ""))
 		(while (equal pr-dir "")
-      ;; If the user simply pressed RET, do this again until they don't.
       (setq pr-dir (minibuffer-with-setup-hook
-											 (lambda ()
-												 (when (minibufferp)
-													 (add-hook 'pre-command-hook
-																		 #'projel-auto-schedule-preview nil t)
-													 (use-local-map
-														(make-composed-keymap projel-minibuffer-map
-																									(current-local-map)))))
+											 #'projel-setup-minibuffer
 										 (completing-read "Candidates: "
 																			(lambda (str pred action)
 																				(if (eq action 'metadata)
 																						`(metadata
 																							(annotation-function . ,annotf)
-																							(cycle-sort-function .
-																																	 ,cycle-sort-fn)
-																							(category . project-file)
-																							(display-sort-function .
-																																		 ,display-sort-fn))
+																							(group-function . ,group-function)
+																							(category . project-file))
 																					(complete-with-action action
 																																alist
 																																str pred)))
 																			nil t))))
-		(if (equal pr-dir dir-choice)
+		(if (and dir-choice pr-dir (string= pr-dir dir-choice))
         (read-directory-name "Select directory: " default-directory nil t)
       pr-dir)))
+
 
 ;;;###autoload
 (defun projel-write-projects ()
