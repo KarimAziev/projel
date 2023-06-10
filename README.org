@@ -8,10 +8,7 @@ Minor mode that enhance Emacs builtin [[https://elpa.gnu.org/packages/project.ht
 #+BEGIN_QUOTE
 - [[#about][About]]
 - [[#installation][Installation]]
-  - [[#with-use-package-and-straight][With ~use-package~ and ~straight~]]
-  - [[#manual-installation][Manual installation]]
 - [[#usage][Usage]]
-  - [[#usage-1][Usage]]
 #+END_QUOTE
 
 * Installation
@@ -22,7 +19,7 @@ Minor mode that enhance Emacs builtin [[https://elpa.gnu.org/packages/project.ht
 | [[https://elpa.gnu.org/packages/project.html][project]] |   0.9.8 |
 
 
-** With ~use-package~ and ~straight~
+*** With ~use-package~ and ~straight~
 #+begin_src elisp :eval no
 (use-package projel
   :after (project)
@@ -34,17 +31,17 @@ Minor mode that enhance Emacs builtin [[https://elpa.gnu.org/packages/project.ht
   :bind ((:map projel-minibuffer-map
                ("C-j" . projel-preview-file)
                ("C-c C-o" . projel-find-file-other-window))
-				 (:map projel-minibuffer-project-map
+         (:map projel-minibuffer-project-map
                ("C-j" . projel-preview-file)
                ("C-c C-u" . projel-rescan-all-projects)
                ("C-c !" . projel-rescan-directory)
                ("C-c C-o" . projel-find-file-other-window)))
-	:commands (projel-mode)
-	:config
-	(projel-mode))
+  :commands (projel-mode)
+  :config
+  (projel-mode))
 #+end_src
 
-** Manual installation
+*** Manual installation
 
 Download the source code and put it wherever you like, e.g. into =~/.emacs.d/projel/=
 
@@ -60,8 +57,6 @@ Add the downloaded directory to the load path:
 #+end_src
 
 * Usage
-
-** Usage
 
 **** ~M-x projel-mode~
 
