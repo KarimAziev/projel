@@ -1,15 +1,50 @@
-* projel
+#+OPTIONS: ^:nil
 
-Enhanced Project.
+* About
 
-** Installation
+Minor mode that enhance Emacs builtin [[https://elpa.gnu.org/packages/project.html][project.el]] with annotations, sorting, grouping and additional keymaps. Support various completion systems - default, ivy, fido, ido, icomplete etc.
 
-Emacs >= 28.1 is required.
+* Table of Contents                                       :TOC_2_gh:QUOTE:noexport:
+#+BEGIN_QUOTE
+- [[#about][About]]
+- [[#installation][Installation]]
+  - [[#with-use-package-and-straight][With ~use-package~ and ~straight~]]
+  - [[#manual-installation][Manual installation]]
+- [[#usage][Usage]]
+  - [[#usage-1][Usage]]
+#+END_QUOTE
 
-*** Manual
+* Installation
 
-Ensure that you have installed required dependencies:
-- ~project~ >= 0.9.8
+| Name    | Version |
+|---------+---------|
+| Emacs   |    28.1 |
+| [[https://elpa.gnu.org/packages/project.html][project]] |   0.9.8 |
+
+
+** With ~use-package~ and ~straight~
+#+begin_src elisp :eval no
+(use-package projel
+  :after (project)
+  :demand t
+  :straight (projel
+             :repo "KarimAziev/projel"
+             :type git
+             :host github)
+  :bind ((:map projel-minibuffer-map
+               ("C-j" . projel-preview-file)
+               ("C-c C-o" . projel-find-file-other-window))
+				 (:map projel-minibuffer-project-map
+               ("C-j" . projel-preview-file)
+               ("C-c C-u" . projel-rescan-all-projects)
+               ("C-c !" . projel-rescan-directory)
+               ("C-c C-o" . projel-find-file-other-window)))
+	:commands (projel-mode)
+	:config
+	(projel-mode))
+#+end_src
+
+** Manual installation
 
 Download the source code and put it wherever you like, e.g. into =~/.emacs.d/projel/=
 
@@ -21,29 +56,28 @@ Add the downloaded directory to the load path:
 
 #+begin_src elisp :eval no
 (add-to-list 'load-path "~/.emacs.d/projel/")
-(require 'project)
-
-(projel-enable-project-override)
+(require 'projel)
 #+end_src
 
-#+begin_src elisp :eval no
-(use-package projel
-  :after (project)
-  :demand t
-  :straight (projel
-             :repo "KarimAziev/projel"
-             :type git
-             :host github)
-  :bind ((:map projel-minibuffer-map
-               ("C-j" . projel-preview-file)
-               ("C-c C-o" . projel-find-file-other-window)))
-	:config (projel-enable-project-override))
-#+end_src
+* Usage
 
-** Keymaps
+** Usage
 
-*** ~projel-minibuffer-map~
-| Key     | Command                       | 
-|---------+-------------------------------|
-| C-j     | projel-preview-file           |
-| C-c C-o | projel-find-file-other-window |
+**** ~M-x projel-mode~
+
+To enable keymaps when completing projects ~projel-minibuffer-project-map~.
+
+| Key       | Command                       |
+|-----------+-------------------------------|
+| =C-c !=   | Find projects in directory    |
+| =C-c C-u= | Rescan all projects           |
+| =C-c C-o= | Open project in other window  |
+| =C-j=     | Preview project               |
+
+And for project files - ~projel-minibuffer-map~.
+
+| Key       | Command                   |
+|-----------+---------------------------|
+| =C-j=     | Preview file              |
+| =C-c C-o= | Open file in other window |
+
