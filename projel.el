@@ -6,7 +6,7 @@
 ;; URL: https://github.com/KarimAziev/projel
 ;; Version: 0.1.0
 ;; Keywords: project, convenience, vc
-;; Package-Requires: ((emacs "28.1"))
+;; Package-Requires: ((emacs "28.1") (project "0.9.8") (transient "0.4.0"))
 ;; SPDX-License-Identifier: GPL-3.0-or-later
 
 ;; This file is NOT part of GNU Emacs.
@@ -31,6 +31,7 @@
 ;;; Code:
 
 (require 'project)
+(require 'transient)
 
 (defcustom projel-projects-excluded-dirs '("~/Dropbox"
                                            "~/.cache"
@@ -44,6 +45,12 @@
   :type '(repeat directory)
   :group 'projel)
 
+(defcustom projel-allow-magit-repository-directories-sync t
+  "Whether to add projects parents directory to `magit-repository-directories'."
+  :type '(repeat directory)
+  :group 'projel)
+
+
 (defcustom projel-projects-exlcuded-non-directory-names	'(".cache"
                                                           ".config"
                                                           ".local"
@@ -54,6 +61,7 @@
   :type '(repeat directory)
   :group 'projel)
 
+
 (defcustom projel-auto-preview-delay nil
   "Number of seconds to wait before show file preview in minibuffer.
 If nil, disable auto preview."
@@ -61,14 +69,52 @@ If nil, disable auto preview."
                 (number :tag "Seconds"))
   :group 'projel)
 
+;; currenlty not implemented
 (defcustom projel-explore-dirs-settings '(("~/"
-                                           (:max-depth . 3)))
-  "Settings per directory."
-  :type '(alist
-          :key-type (directory :tag "Directory")
-          :value-type (alist :options
-                             ((:max-depth (integer :tag "Maximum depth" 1))
-                              (:non-visit-dirs (repeat directory)))))
+                                           (:max-depth . 3)
+                                           (:non-visit-dirs . ("node_modules"
+                                                               ".cache"
+                                                               ".cask"))
+                                           (:exclude-regexps . ("^\\."))
+                                           (:include-regexps . ("^\\.emacs\\.d"))))
+  "Settings per parent directories. Currenlty it is not implemented."
+  :type
+  '(alist
+    :key-type (directory :tag "Directory")
+    :value-type
+    (alist :options
+           ((:max-depth (integer :tag "Maximum depth" 1))
+            (:non-visit-dirs (repeat :tag
+                                     "Excluded directory"
+                                     directory)
+                             '("node_modules"
+                               ".cache"
+                               ".cask"))
+            (:exclude-regexps . ("^\\."))
+            (:include-regexps . ("^\\.emacs\\.d")))))
+  :group 'projel)
+
+(defface projel-project-type-annotation '((t :inherit font-lock-keyword-face))
+  "Face used by for project type annotations."
+  :group 'projel)
+
+(defface projel-project-description-annotation '((t :inherit
+                                                    completions-annotations))
+  "Face used by for project descriptions annotations."
+  :group 'projel)
+
+(defcustom projel-annotation-project-type-max-width 10
+  "The maximum length of the project type to display in minibuffer.
+
+If the string exceeds this limit, it will be truncated to fit."
+  :type 'integer
+  :group 'projel)
+
+(defcustom projel-annotation-project-description-max-width 80
+  "The maximum length of the project description to display in minibuffer.
+
+If the string exceeds this limit, it will be truncated to fit."
+  :type 'integer
   :group 'projel)
 
 (defcustom projel-explore-project-depth 3
@@ -81,15 +127,24 @@ If nil, disable auto preview."
   :type 'boolean
   :group 'projel)
 
-(defcustom projel-choose-dir-label "(add a dir)"
-  "A text to show in minibuffer completions to select other project directory."
-  :group 'projel
-  :type 'string)
 
-(defcustom projel-rescan-dir-label "*Rescan*"
+(defcustom projel-projects-actions-alist '(("*Rescan all projects*" .
+                                            projel-rescan-all-projects)
+                                           ("*Find projects in directory*" .
+                                            projel-rescan-directory)
+                                           ("*Add project*"
+                                            . projel-add-project-directory)
+                                           ("*Remove project*"
+                                            . projel-remove-project))
   "A text to show in minibuffer completions to rescan projects."
   :group 'projel
-  :type 'string)
+  :type '(alist
+          :key-type (string :tag "Label")
+          :value-type (choice (function-item projel-add-project-directory)
+                              (function-item projel-rescan-directory)
+                              (function-item projel-rescan-all-projects)
+                              (function-item projel-remove-project)
+                              (function :tag "Custom function"))) )
 
 (defcustom projel-preview-buffer-name "*projel-preview*"
   "Buffer name to use for preview file."
@@ -334,6 +389,7 @@ This function accepts any number of arguments but ignores them."
   "Return right-to-left composition from FUNCTIONS."
   (declare (debug t)
            (pure t)
+           (indent defun)
            (side-effect-free t))
   `(projel--pipe ,@(reverse functions)))
 
@@ -523,6 +579,7 @@ commands."
              (when (file-exists-p file)
                file))))))
 
+
 ;;;###autoload
 (defun projel-find-file-other-window ()
   "Invoke action to find selected file in minibuffer in other window."
@@ -707,6 +764,7 @@ CURRENT-DEPTH is used for recoursive purposes."
                                subdirs))))))))
         found-dirs))))
 
+
 (defun projel-find-projects-in-dir (dir &optional max-depth write)
   "Explore projects in DIR at max depth MAX-DEPTH.
 If WRITE is non nil, write found projects.
@@ -728,10 +786,25 @@ Return alist of added projects."
                               (setq results (push (list proj) results)))
                             proj)))
     (when results
-      (setq project--list (nconc project--list results))
+      (setq project--list (nconc results project--list))
       (when write
         (project--write-project-list)))
     results))
+
+;;;###autoload
+(defun projel-add-projects-to-magit-repositories-dirs ()
+  "Add parents directories of current projects to `magit-repository-directories'."
+  (interactive)
+  (let ((added))
+    (dolist (dir (projel-get-projects-parent-dirs))
+      (when (and projel-allow-magit-repository-directories-sync
+                 (boundp 'magit-repository-directories)
+                 (not (assoc-string dir magit-repository-directories)))
+        (add-to-list 'magit-repository-directories (cons dir 1))
+        (push dir added)))
+    (message "Projel: added %d directories to magit-repository-directories"
+             (length
+              added))))
 
 (defun projel-rescan-all (&optional depth)
   "Explore projects in DIR at max depth DEPTH.
@@ -747,36 +820,62 @@ If CHECK-EXISTING is non nil, also remove dead projects."
             (-
              (length project--list)
              (length existing-projects))))
-    (let ((dirs (delete-dups (mapcar #'file-name-parent-directory
-                                     (project-known-project-roots))))
+    (when dead-projects
+      (setq project--list existing-projects))
+    (let ((dirs (projel-get-projects-parent-dirs))
           (results))
       (dolist (dir (or dirs (list "~/")))
         (message "Rescanning %s" dir)
-        (setq results
-              (nconc results
-                     (projel-find-projects-in-dir
-                      dir
-                      (or depth
-                          (if dirs 1
-                            projel-explore-project-depth))))))
+        (when-let ((res
+                    (when (file-exists-p dir)
+                      (projel-find-projects-in-dir
+                       dir
+                       (or depth
+                           (if dirs 1
+                             projel-explore-project-depth))))))
+          (setq results
+                (nconc results res))
+          (when (and projel-allow-magit-repository-directories-sync
+                     (boundp 'magit-repository-directories))
+            (add-to-list 'magit-repository-directories (list dir 1)))))
       (when (or dead-projects results)
         (project--write-project-list)
         (message
+         "Projel: %s"
          (string-join
-          (list
-           (when results
-             (format "Added %d" (length results)))
-           (when dead-projects
-             (format "Removed %d" dead-projects)))
-          ". "))))))
+          (delq nil
+                (list
+                 (when results
+                   (format "Added %d projects. " (length results)))
+                 (when dead-projects
+                   (format "Removed %d projects. " dead-projects))))
+          ""))))))
 
-(defun projel-get-projects (&optional dir depth)
-  "Get PROJECTS in DIR at DEPTH."
-  (project--ensure-read-project-list)
-  (when (or dir
-            (not project--list)
-            depth)
-    (projel-find-projects-in-dir (or dir "~/") depth t))
+(defun projel-get-projects ()
+  "Init `project--list'.
+If `projel-auto-rescan-on-init' is enabled and `project--list' is not initted,
+rescan parent directories of projects.
+Also check and remove unexisting projects."
+  (if (or
+       (and projel-auto-rescan-on-init
+            (eq project--list 'unset)))
+      (progn
+        (project--ensure-read-project-list)
+        (projel-rescan-all (if project--list
+                               1
+                             projel-explore-project-depth)))
+    (project--ensure-read-project-list)
+    (when (seq-find (projel--compose
+                      not
+                      file-exists-p
+                      car)
+                    project--list)
+      (setq project--list (seq-filter (projel--compose
+                                        not
+                                        file-exists-p
+                                        car)
+                                      project--list))
+      (project--write-project-list)))
   project--list)
 
 (defun projel-expand-wildcards (pattern dir depth &optional full regexp)
@@ -806,13 +905,11 @@ If FULL is non-nil, files are absolute."
               (number-sequence 0 (1- depth))))))
 
 
-(defvar projel-repos nil)
-
-(defun projel-get-dirs-for-cloning ()
+(defun projel-get-projects-parent-dirs ()
   "Return list of git parents directories."
-  (let ((tramp-archive-enabled nil))
-    (seq-uniq (mapcar #'file-name-parent-directory
-                      (project-known-project-roots)))))
+  (project--ensure-read-project-list)
+  (delete-dups (mapcar #'file-name-parent-directory
+                       (project-known-project-roots))))
 
 (defvar projel-minibuffer-map
   (let ((map (make-sparse-keymap)))
@@ -821,48 +918,110 @@ If FULL is non-nil, files are absolute."
     map)
   "Keymap to use in minibuffer when reading projects and files.")
 
+
+;;;###autoload
+(defun projel-remove-project (&optional project-dir)
+  "Dispatch or perform action to remove PROJECT-DIR from the project list.
+
+If active minibuffer window exists it will throw list with
+`project--remove-from-project-list' and currently selected minibuffer project.
+
+If no active minibuffer window exists, it will remove directory PROJECT-DIR
+of a missing project from the project list. If PROJECT-DIR is nil,
+it will read project in minibuffer."
+  (interactive)
+  (unless project-dir
+    (setq project-dir (if (active-minibuffer-window)
+                          (pcase-let ((`(,_category . ,current)
+                                       (projel-minibuffer-current-candidate)))
+                            current)
+                        (projel-completing-read-project))))
+  (if (active-minibuffer-window)
+      (throw 'action (list 'project--remove-from-project-list project-dir
+                           "Project `%s' removed from known projects"))
+    (project--remove-from-project-list
+     project-dir "Project `%s' removed from known projects")))
+
+;;;###autoload
+(defun projel-add-project-directory ()
+  "Either dispatch or add directory PROJECT-DIR from the project list.
+
+If active minibuffer window exists, it will throw corresponding action and
+its arguments.
+
+If no active minibuffer window exists, it will prompt directory, and add
+it to list of projects."
+  (interactive)
+  (let ((fn (lambda ()
+              (if-let ((pr (project--find-in-directory (read-directory-name
+                                                        "Select directory: "
+                                                        (if-let
+                                                            ((proj
+                                                              (projel-current-project-root)))
+                                                            (file-name-parent-directory
+                                                             proj)
+                                                          default-directory)
+                                                        nil t))))
+                  (project-remember-project pr)
+                (message "could add project")))))
+    (if (active-minibuffer-window)
+        (throw 'action (list fn))
+      (funcall fn))))
+
 ;;;###autoload
 (defun projel-rescan-directory (&optional dir depth)
-  "Rescan parent directories in DIR at DEPTH."
-  (interactive (list (read-directory-name "Directory" "~/")
+  "Dispatch or perform action to add projects in DIR at max DEPTH.
+If DIR or DEPTH is nil it will read DIR and DEPTH in minibuffer.
+
+If active minibuffer window exists throw the action
+`projel-find-projects-in-dir' with DIR and DEPTH, otherwise invoke this action
+with DIR and DEPTH."
+  (interactive (list (read-directory-name "Directory")
                      (read-number "Max depth: ")))
+  (unless dir (setq dir (read-directory-name "Directory")))
+  (unless depth (setq depth (read-number "Max depth: ")))
   (if (active-minibuffer-window)
-      (projel--exit-with-action
-       (lambda (&rest _)
-         (projel-find-projects-in-dir dir t)
-         (if (boundp 'project-prompter)
-             (funcall project-prompter)
-           (project-prompt-project-dir))))
-    (projel-find-projects-in-dir dir depth t)
-    (unless (active-minibuffer-window)
-      (if (boundp 'project-prompter)
-          (funcall project-prompter)
-        (project-prompt-project-dir)))))
+      (throw 'action (list #'projel-find-projects-in-dir dir depth))
+    (projel-find-projects-in-dir dir depth)))
+
 
 ;;;###autoload
 (defun projel-rescan-all-projects ()
   "Rescan parent directories of current projects."
   (interactive)
   (if (active-minibuffer-window)
-      (projel--exit-with-action
-       (lambda (&rest _)
-         (projel-rescan-all)
-         (if (boundp 'project-prompter)
-             (funcall project-prompter)
-           (project-prompt-project-dir))))
-    (projel-rescan-all)
-    (unless (active-minibuffer-window)
-      (if (boundp 'project-prompter)
-          (funcall project-prompter)
-        (project-prompt-project-dir)))))
+      (throw 'action (list 'projel-rescan-all ))
+    (projel-rescan-all)))
 
 (defvar projel-minibuffer-project-map
   (let ((map (make-sparse-keymap)))
     (set-keymap-parent map projel-minibuffer-map)
     (define-key map (kbd "C-c C-u") #'projel-rescan-all-projects)
+    (define-key map (kbd "C-c M-D") #'projel-remove-project)
     (define-key map (kbd "C-c !") #'projel-rescan-directory)
+    (define-key map (kbd "C-c C-M-o") #'projel-add-project-directory)
+    (define-key map (kbd "C-h ?") #'projel-projects-minibuffer-help)
     map)
-  "Keymap to use in minibuffer when reading projects and files.")
+  "Keymap to use in minibuffer when reading projects.")
+
+;;;###autoload
+(defun projel-projects-minibuffer-help ()
+  "Show keybindings for `projel-minibuffer-project-map'."
+  (interactive)
+  (let ((overlay))
+    (unwind-protect
+        (progn (setq overlay (make-overlay (point)
+                                           (1+ (point))))
+               (overlay-put overlay 'after-string
+                            (substitute-command-keys
+                                     "\\<projel-minibuffer-project-map>\\{projel-minibuffer-project-map}"))
+               (read-key-sequence ""))
+      (setq unread-command-events
+            (append (this-single-command-raw-keys)
+                    unread-command-events))
+      (when (overlayp overlay)
+        (delete-overlay overlay)))))
+
 
 (defun projel-run-js-project (orig-fn arg)
   "In js projects invoke custom command, otherwise just call ORIG-FN with ARG."
@@ -878,14 +1037,6 @@ If FULL is non-nil, files are absolute."
            (require 'npmjs)
            (when (fboundp 'npmjs-run-script)
              (npmjs-run-script))))))
-
-(defun projel-apply-with-minibuffer-setup (fn &rest args)
-  "Apply FN with ARGS with minibuffer hook that setup `projel-minibuffer-map'.
-During minibuffer completion the following next commands are available:
-\\<projel-minibuffer-map>\\{projel-minibuffer-map}."
-  (minibuffer-with-setup-hook
-      #'projel-setup-minibuffer
-    (apply fn args)))
 
 (defun projel--completing-read-node-modules (prompt &rest _)
   "Read closest to current directory files in node_modules with PROMPT.
@@ -924,6 +1075,18 @@ During minibuffer completion the following next commands are available:
                  #'>
                  readme-files)))
 
+(defun projel-remove-link (str)
+  "Remove markdown links from string STR."
+  (with-temp-buffer
+    (insert str)
+    (while (re-search-backward
+            "\\(?1:!\\)?\\(?2:\\[\\)\\(?3:[^]^][^]]*\\|\\)\\(?4:\\]\\)[ ]?\\(?5:\\[\\)\\(?6:[^]]*?\\)\\(?7:\\]\\)"
+            nil t 1)
+      (let ((label (match-string-no-properties 3)))
+        (if label
+            (replace-match label nil nil nil 0))))
+    (buffer-string)))
+
 (defun projel-md-description ()
   "Extract annotation from FILE."
   (let ((found nil))
@@ -937,6 +1100,19 @@ During minibuffer completion the following next commands are available:
               nil t 1))
             ((looking-at "\\(\s-*\\|^\\)#\\+begin_")
              (re-search-forward "\\(\s-*\\|^\\)#\\+end_" nil t 1))
+            ((let ((case-fold-search nil))
+               (looking-at "^\\(\s-*\\|^\\)\\([A-Z`][a-z][^.]+\\)[.]"))
+             (let ((case-fold-search nil))
+               (let* ((beg (point))
+                      (end
+                       (or
+                        (re-search-forward "[.]\n" nil t 1)
+                        (re-search-forward
+                         "^\\(\s-*\\|^\\)\\([A-Z`][a-z][^.]+\\)[.]" nil t 1)))
+                      (annotation (buffer-substring-no-properties
+                                   beg end)))
+                 (setq found
+                       annotation))))
             ((looking-at "\\(\s-*\\|^\\)[a-z]")
              (let* ((beg (point))
                     (end (progn
@@ -950,7 +1126,7 @@ During minibuffer completion the following next commands are available:
                             annotation)
                        annotation))))))
     (when found
-      (string-join (split-string found
+      (string-join (split-string (projel-remove-link found)
                                  "[\n\r\f]" t)
                    "\s"))))
 
@@ -1118,14 +1294,6 @@ It checks whether current directory files includes first car in
   (when (fboundp 'github-linguist-lookup)
     (github-linguist-lookup default-directory)))
 
-(defun projel-get-project-language ()
-  "Return PROJECT descriptions."
-  (when-let ((langs (seq-take-while
-                     (pcase-lambda (`(,_language \, percent))
-                       (> percent 30.0))
-                     (projel-get-project-languages))))
-    (mapconcat #'car langs " / ")))
-
 (defun projel-get-project-type (project)
   "Return PROJECT descriptions."
   (let (target)
@@ -1133,7 +1301,7 @@ It checks whether current directory files includes first car in
      'projel-project-type-finders
      (lambda (fun dir)
        (let ((default-directory dir))
-         (setq target (funcall fun))))
+         (setq target (ignore-errors (funcall fun)))))
      (file-name-as-directory (expand-file-name project)))
     target))
 
@@ -1168,37 +1336,18 @@ It checks whether current directory files includes first car in
      'projel-project-descriptions-finders
      (lambda (fun dir)
        (let ((default-directory dir))
-         (setq target (funcall fun))))
+         (setq target (ignore-errors (funcall fun)))))
      (file-name-as-directory (expand-file-name project)))
     target))
 
-(defun projel-annotate-project (directory)
-  "Annotate project DIRECTORY."
-  (if (projel-project-action-candidate-p directory)
-      ""
-    (let ((proj-type (truncate-string-to-width (or
-                                                (when-let ((str (projel-get-project-type
-                                                                 directory)))
-                                                  (propertize str 'face
-                                                              'font-lock-keyword-face))
-                                                "")
-                                               30 nil ?\t)))
-      (concat proj-type "  " (or (projel-get-project-descriptions directory)
-                                 "")))))
-
-(defun projel-add-annotations-to-project-list ()
-  "Add annotations `projects-list'."
-  (project--ensure-read-project-list)
-  (dolist (cell project--list)
-    (setcdr cell (projel-get-project-type
-                  (car cell))))
-  project--list)
-
 ;;;###autoload
-(defun projel-reset-all ()
-  "Rescan projects in DIR at max DEPTH."
+(defun projel-remove-all-projects ()
+  "Remove all."
   (interactive)
-  (projel-rescan-all))
+  (setq project--list nil)
+  (when (and (file-exists-p project-list-file)
+             (yes-or-no-p (format "Remove %s?" project-list-file)))
+    (delete-file project-list-file)))
 
 (defun projel--setup-minibuffer (&optional keymap)
   "Setup minibuffer preview if value of `projel-auto-preview-delay' is a number.
@@ -1207,8 +1356,8 @@ If KEYMAP is non nil, also setup KEYMAP."
     (remove-hook 'pre-command-hook
                  #'projel-auto-schedule-preview t)
     (remove-hook 'post-command-hook #'projel-restore-completions-wind)
+    (add-hook 'minibuffer-exit-hook #'projel--kill-preview-buffer nil t)
     (when projel-auto-preview-delay
-      (add-hook 'minibuffer-exit-hook #'projel--kill-preview-buffer nil t)
       (add-hook 'pre-command-hook
                 #'projel-auto-schedule-preview nil t))
     (when keymap
@@ -1234,6 +1383,17 @@ Also setup auto preview if value of `projel-auto-preview-delay' is a number."
                        files)))
     sorted-files))
 
+(defun projel-sort-project (files)
+  "Sort alist of FILES."
+  (let* ((meta (projel-projects-action-candidates))
+         (sorted-files (seq-sort
+                        (lambda (a b)
+                          (if (seq-find (apply-partially #'string= a) meta)
+                              nil
+                            (file-newer-than-file-p a b)))
+                        files)))
+    sorted-files))
+
 (defun projel-group-fn (str &optional transform)
   "A function for grouping projects during the minibuffer completion.
 STR is a completion candidate, and TRANSFORM is a boolean flag.
@@ -1256,9 +1416,7 @@ return the transformed candidate."
   "Return completion candidates that indicates some action.
 If TRANSFORM-FN is non nil, it wil be called with each candidate."
   (let ((strings (seq-filter #'stringp
-                             (list
-                              projel-choose-dir-label
-                              projel-rescan-dir-label))))
+                             (mapcar #'car projel-projects-actions-alist))))
     (if transform-fn
         (mapcar
          transform-fn
@@ -1296,101 +1454,133 @@ by the user at will."
       (with-no-warnings
         (car (project-roots project))))))
 
+(defun projel-annotate-project-type (project-directory)
+  "Return propertized string with project type for PROJECT-DIRECTORY or nil."
+  (when-let ((str
+              (projel-get-project-type
+               project-directory)))
+    (propertize (truncate-string-to-width
+                 str
+                 projel-annotation-project-type-max-width
+                 nil ?\s "...")
+                'face
+                'projel-project-type-annotation)))
+
+(defun projel-annotate-project-description (project-directory)
+  "Return propertized string with description for PROJECT-DIRECTORY or nil."
+  (when-let ((description (projel-get-project-descriptions project-directory)))
+    (propertize (truncate-string-to-width
+                 description
+                 projel-annotation-project-description-max-width
+                 nil nil "...")
+                'face
+                'projel-project-description-annotation)))
+
+
+(defun projel-make-project-annotation-fn (alist)
+  "Create annotation function for projects ALIST.
+FMT is a format control string with 2 %s placeholders.
+CURRENT-PROJECT is a current project directory or nil.
+META-CANDIDATES is a list of strings that shouldn't be annotated."
+  (let ((project-default-type
+         (make-string projel-annotation-project-type-max-width ?\s))
+        (meta-candidates (projel-projects-action-candidates))
+        (fmt
+         (let ((longest (if alist
+                            (+ 5
+                               (apply #'max (mapcar
+                                             (projel--compose
+                                               length
+                                               car)
+                                             alist)))
+                          10)))
+           (concat
+            (propertize " " 'display
+                        `(space
+                          :align-to
+                          ,longest))
+            " %s"
+            (propertize " " 'display
+                        `(space
+                          :align-to
+                          ,(+ longest
+                              projel-annotation-project-type-max-width)))
+            " %s"))))
+    (lambda (it)
+      (cond ((seq-find
+              (apply-partially #'string= it) meta-candidates)
+             "")
+            (t
+             (let ((proj-type (projel-annotate-project-type it))
+                   (descr (projel-annotate-project-description it)))
+               (if (and (not proj-type)
+                        (not descr))
+                   ""
+                 (format fmt
+                         (or (projel-annotate-project-type it)
+                             project-default-type)
+                         (or (projel-annotate-project-description it)
+                             "")))))))))
+
 (defun projel-project--file-completion-table (alist &optional annotate-fn)
-  "Completion table for ALIST of projects with annotations ANNOTATE-FN."
-  (let* ((longest (+ 2 (apply #'max (mapcar
-                                     (projel--compose
-                                      length
-                                      car)
-                                     alist))))
-         (current (projel-current-project-root))
-         (actions (projel-projects-action-candidates))
-         (fmt (concat
-               (propertize " " 'display
-                           `(space
-                             :align-to
-                             ,longest))
-               " %s"
-               (propertize " " 'display `(space
-                                          :align-to
-                                          (+ longest 30)))
-               " %s")))
+  "Completion table for project ALIST of projects with annotations ANNOTATE-FN."
+  (let* ((annotfn (or annotate-fn
+                      (projel-make-project-annotation-fn alist)))
+         (meta (projel-projects-action-candidates))
+         (sort-fn (lambda (files)
+                    (sort
+                     files
+                     (lambda (a b)
+                       (cond ((seq-find (apply-partially #'string= a)
+                                        meta)
+                              nil)
+                             ((seq-find (apply-partially #'string= b) meta)
+                              t)
+                             (t (file-newer-than-file-p a b))))))))
     (lambda (str pred action)
       (if (eq action 'metadata)
           `(metadata
-            (annotation-function .
-                                 ,(or annotate-fn
-                                      (lambda (it)
-                                        (if
-                                            (seq-find
-                                             (apply-partially #'string=
-                                                              it)
-                                             actions)
-                                            ""
-                                          (let ((value
-                                                 (format fmt
-                                                         (truncate-string-to-width
-                                                          (or
-                                                           (when-let ((str
-                                                                       (projel-get-project-type
-                                                                        it)))
-                                                             (propertize
-                                                              str
-                                                              'face
-                                                              'font-lock-keyword-face))
-                                                           "")
-                                                          10 nil ?\s "...")
-                                                         (truncate-string-to-width
-                                                          (or (projel-get-project-descriptions
-                                                               it)
-                                                              "")
-                                                          80 nil nil "..."))))
-                                            (if (and current
-                                                     (string= current it))
-                                                (propertize value 'face 'success)
-                                              value))))))
-            (group-function .
-                            projel-group-fn)
+            (annotation-function . ,annotfn)
+            (group-function . projel-group-fn)
+            (display-sort-function . ,sort-fn)
             (category . project-root))
-        (complete-with-action action
-                              alist
-                              str pred)))))
+        (complete-with-action action alist str pred)))))
+
+
 
 (defun projel-completing-read-project (&rest _)
   "Prompt the user for a directory that is one of the known project roots.
 The project is chosen among projects known from the project list,
 see `project-list-file'.
 It's also possible to enter an arbitrary directory not in the list."
-  (let* ((alist (append
-                 (projel-sort-files-alist (projel-get-projects))
-                 (projel-projects-action-candidates
-                  (projel--compose
-                   list
-                   substring-no-properties))))
-         (pr-dir ""))
-    (dolist (it project--list)
-      (setcar it (substring-no-properties (car it))))
-    (while (member pr-dir (list "" projel-rescan-dir-label))
-      (cond ((equal pr-dir projel-rescan-dir-label)
-             (call-interactively #'projel-rescan-directory)
-             (setq alist
-                   (append (projel-sort-files-alist project--list)
-                           (projel-projects-action-candidates
-                            (projel--compose
-                             list
-                             substring-no-properties))))))
-      (setq pr-dir (minibuffer-with-setup-hook
-                       #'projel-setup-projects-minibuffer
-                     (completing-read "Select project: "
-                                      (projel-project--file-completion-table
-                                       alist)
-                                      nil t))))
-    (if (and projel-choose-dir-label
-             (string=
-              pr-dir
-              projel-choose-dir-label))
-        (read-directory-name "Select directory: " default-directory nil t)
-      pr-dir)))
+  (let* ((pr-dir "")
+         (action)
+         (done))
+    (projel-get-projects)
+    (while (setq action
+                 (unless done (catch 'action
+                                (minibuffer-with-setup-hook
+                                    #'projel-setup-projects-minibuffer
+                                  (completing-read "Select project: "
+                                                   (projel-project--file-completion-table
+                                                    (append
+                                                     (remove
+                                                      (list
+                                                       (projel-current-project-root))
+                                                      project--list)
+                                                     (projel-projects-action-candidates
+                                                      (projel--compose
+                                                        list
+                                                        substring-no-properties))))
+                                                   nil t)))))
+      (cond ((or (listp action))
+             (apply (car action)
+                    (cdr action)))
+            ((cdr (assoc action projel-projects-actions-alist))
+             (funcall (cdr (assoc action projel-projects-actions-alist))))
+            (t (setq pr-dir action)))
+      (setq done (not (string-empty-p pr-dir))))
+    pr-dir))
 
 (defmacro projel-csetq (variable value)
   "Set the value of VARIABLE to VALUE using the appropriate set function."
@@ -1400,6 +1590,37 @@ It's also possible to enter an arbitrary directory not in the list."
   "Get saved or standard value for SYM."
   (or (car (get sym 'saved-value))
       (eval (car (get sym 'standard-value)))))
+
+
+
+;;;###autoload (autoload 'projel-menu "projel.el" nil t)
+(transient-define-prefix projel-menu ()
+  "Menu for project commands."
+  [:description
+   (lambda ()
+     (or (ignore-errors (project-name (project-current nil)))
+         ""))
+   [("p" "Switch Project" project-switch-project)
+    ("D" "Dired" project-dired)
+    ("f" "Find File" project-find-file)
+    ("F" "Find File external roots" project-or-external-find-file)
+    ("G" "Find Regexp" project-or-external-find-regexp)
+    ("d" "Find Dir" project-find-dir)
+    ("g" "Find Regexp" project-find-regexp)
+    ("r" "Query Replace Regexp" project-query-replace-regexp)
+    ("b" "Switch To Buffer" project-switch-to-buffer)
+    ("C-b" "List Buffers" project-list-buffers)]
+   [("c" "Compile" project-compile)
+    ("e" "Eshell" project-eshell)
+    ("k" "Kill Buffers" project-kill-buffers)
+    ("v" "Run VC-Dir" project-vc-dir)
+    ("s" "Shell" project-shell)
+    ("!" "Shell Command" project-shell-command)
+    ("&" "Async Shell Command" project-async-shell-command)
+    ("x" "Execute Extended Command"
+     project-execute-extended-command)]])
+
+;;;###autoload (define-key ctl-x-map "p" 'projel-menu)
 
 ;;;###autoload
 (defun projel-enable-project-override ()
