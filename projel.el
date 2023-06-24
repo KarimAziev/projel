@@ -6,7 +6,7 @@
 ;; URL: https://github.com/KarimAziev/projel
 ;; Version: 0.1.0
 ;; Keywords: project, convenience, vc
-;; Package-Requires: ((emacs "28.1") (project "0.9.8") (transient "0.4.0"))
+;; Package-Requires: ((emacs "28.1") (project "0.9.8") (transient "0.4.1"))
 ;; SPDX-License-Identifier: GPL-3.0-or-later
 
 ;; This file is NOT part of GNU Emacs.
