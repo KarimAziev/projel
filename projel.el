@@ -685,7 +685,7 @@ Instead it uses a temporarly buffer `projel-preview-buffer-name'."
     (while (setq dir
                  (when curr
                    (locate-dominating-file curr ".git")))
-      (setq curr (file-name-parent-directory dir)))
+      (setq curr (projel-file-name-parent-directory dir)))
     curr))
 
 (defun projel-expand-pattern (curr pattern)
@@ -878,37 +878,30 @@ Also check and remove unexisting projects."
       (project--write-project-list)))
   project--list)
 
-(defun projel-expand-wildcards (pattern dir depth &optional full regexp)
-  "Return list of files that matches PATTERN in DIR at max DEPTH.
 
-PATTERN is, by default, a \"glob\"/wildcard string, e.g.,
-\"/tmp/*.png\" or \"/*/*/foo.png\", but can also be a regular
-expression if the optional REGEXP parameter is non-nil.  In any
-case, the matches are applied per sub-directory, so a match can't
-span a parent/sub directory, which means that a regexp bit can't
-contain the \"/\" character.
-
-If FULL is non-nil, files are absolute."
-  (let ((tramp-archive-enabled nil))
-    (let ((dir (file-name-as-directory dir)))
-      (when (string-prefix-p "/" pattern)
-        (setq pattern (substring-no-properties pattern 1)))
-      (mapcan (lambda (n)
-                (let ((tramp-archive-enabled nil))
-                  (file-expand-wildcards
-                   (concat dir
-                           (string-join
-                            (append (make-vector n "**")
-                                    (list pattern))
-                            "/"))
-                   full regexp)))
-              (number-sequence 0 (1- depth))))))
-
+(defun projel-file-name-parent-directory (filename)
+  "Return the directory name of the parent directory of FILENAME.
+If FILENAME is at the root of the filesystem, return nil.
+If FILENAME is relative, it is interpreted to be relative
+to `default-directory', and the result will also be relative."
+  (let* ((expanded-filename (expand-file-name filename))
+         (parent (file-name-directory (directory-file-name expanded-filename))))
+    (cond ;; filename is at top-level, therefore no parent
+     ((or (null parent)
+          ;; `equal' is enough, we don't need to resolve symlinks here
+          ;; with `file-equal-p', also for performance
+          (equal parent expanded-filename))
+      nil)
+     ;; filename is relative, return relative parent
+     ((not (file-name-absolute-p filename))
+      (file-relative-name parent))
+     (t
+      parent))))
 
 (defun projel-get-projects-parent-dirs ()
   "Return list of git parents directories."
   (project--ensure-read-project-list)
-  (delete-dups (mapcar #'file-name-parent-directory
+  (delete-dups (mapcar #'projel-file-name-parent-directory
                        (project-known-project-roots))))
 
 (defvar projel-minibuffer-map
@@ -958,7 +951,7 @@ it to list of projects."
                                                         (if-let
                                                             ((proj
                                                               (projel-current-project-root)))
-                                                            (file-name-parent-directory
+                                                            (projel-file-name-parent-directory
                                                              proj)
                                                           default-directory)
                                                         nil t))))
@@ -1405,7 +1398,7 @@ return the transformed candidate."
      (when transform str))
     ((guard (not transform))
      (propertize (abbreviate-file-name
-                  (file-name-parent-directory
+                  (projel-file-name-parent-directory
                    str))
                  'face
                  'font-lock-constant-face))
