@@ -871,7 +871,6 @@ Also check and remove unexisting projects."
                       car)
                     project--list)
       (setq project--list (seq-filter (projel--compose
-                                        not
                                         file-exists-p
                                         car)
                                       project--list))
