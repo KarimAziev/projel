@@ -781,8 +781,8 @@ Return alist of added projects."
                           (let ((proj
                                  (file-name-as-directory (abbreviate-file-name
                                                           dir))))
-                            (unless (assoc proj
-                                           project--list)
+                            (unless (assoc-string proj
+                                                  project--list)
                               (setq results (push (list proj) results)))
                             proj)))
     (when results
@@ -809,7 +809,6 @@ Return alist of added projects."
 (defun projel-rescan-all (&optional depth)
   "Explore projects in DIR at max depth DEPTH.
 If CHECK-EXISTING is non nil, also remove dead projects."
-  (project--ensure-read-project-list)
   (let ((existing-projects
          (seq-filter (projel--compose file-exists-p car)
                      project--list))
@@ -832,7 +831,8 @@ If CHECK-EXISTING is non nil, also remove dead projects."
                        dir
                        (or depth
                            (if dirs 1
-                             projel-explore-project-depth))))))
+                             projel-explore-project-depth))
+                       t))))
           (setq results
                 (nconc results res))
           (when (and projel-allow-magit-repository-directories-sync
