@@ -865,16 +865,20 @@ Also check and remove unexisting projects."
                                1
                              projel-explore-project-depth)))
     (project--ensure-read-project-list)
-    (when (seq-find (projel--compose
-                      not
-                      file-exists-p
-                      car)
-                    project--list)
-      (setq project--list (seq-filter (projel--compose
-                                        file-exists-p
-                                        car)
-                                      project--list))
-      (project--write-project-list)))
+    (if (proper-list-p project--list)
+        (when (seq-find (projel--compose
+                          not
+                          file-exists-p
+                          car)
+                        project--list)
+          (setq project--list (seq-filter (projel--compose
+                                            file-exists-p
+                                            car)
+                                          project--list))
+          (project--write-project-list))
+      (message "Resetting invalid project--list")
+      (setq project--list nil)
+      (projel-rescan-all)))
   project--list)
 
 
