@@ -6,7 +6,7 @@
 ;; URL: https://github.com/KarimAziev/projel
 ;; Version: 0.1.0
 ;; Keywords: project, convenience, vc
-;; Package-Requires: ((emacs "28.1") (project "0.9.8") (transient "0.4.1"))
+;; Package-Requires: ((emacs "29.1") (project "0.9.8") (transient "0.4.1"))
 ;; SPDX-License-Identifier: GPL-3.0-or-later
 
 ;; This file is NOT part of GNU Emacs.
@@ -788,7 +788,7 @@ Return alist of added projects."
     (when results
       (setq project--list (nconc results project--list))
       (when write
-        (project--write-project-list)))
+        (projel--write-project-list)))
     results))
 
 ;;;###autoload
@@ -839,7 +839,7 @@ If CHECK-EXISTING is non nil, also remove dead projects."
                      (boundp 'magit-repository-directories))
             (add-to-list 'magit-repository-directories (list dir 1)))))
       (when (or dead-projects results)
-        (project--write-project-list)
+        (projel--write-project-list)
         (message
          "Projel: %s"
          (string-join
@@ -851,6 +851,22 @@ If CHECK-EXISTING is non nil, also remove dead projects."
                    (format "Removed %d projects. " dead-projects))))
           ""))))))
 
+(defun projel--write-project-list ()
+  "Save `project--list' in `project-list-file'."
+  (let ((filename project-list-file))
+    (with-temp-buffer
+      (insert ";;; -*- lisp-data -*-\n")
+      (let ((print-length nil)
+            (print-level nil)
+            (print-circle nil))
+        (insert (prin1-to-string project--list)))
+      (write-region nil nil filename nil 'silent))))
+
+(defun projel--ensure-read-project-list ()
+  "Initialize `project--list' if it isn't already initialized."
+  (when (eq project--list 'unset)
+    (project--read-project-list)))
+
 (defun projel-get-projects ()
   "Init `project--list'.
 If `projel-auto-rescan-on-init' is enabled and `project--list' is not initted,
@@ -860,11 +876,11 @@ Also check and remove unexisting projects."
        (and projel-auto-rescan-on-init
             (eq project--list 'unset)))
       (progn
-        (project--ensure-read-project-list)
+        (projel--ensure-read-project-list)
         (projel-rescan-all (if project--list
                                1
                              projel-explore-project-depth)))
-    (project--ensure-read-project-list)
+    (projel--ensure-read-project-list)
     (if (proper-list-p project--list)
         (when (seq-find (projel--compose
                           not
@@ -875,7 +891,7 @@ Also check and remove unexisting projects."
                                             file-exists-p
                                             car)
                                           project--list))
-          (project--write-project-list))
+          (projel--write-project-list))
       (message "Resetting invalid project--list")
       (setq project--list nil)
       (projel-rescan-all)))
@@ -903,7 +919,7 @@ to `default-directory', and the result will also be relative."
 
 (defun projel-get-projects-parent-dirs ()
   "Return list of git parents directories."
-  (project--ensure-read-project-list)
+  (projel--ensure-read-project-list)
   (delete-dups (mapcar #'projel-file-name-parent-directory
                        (project-known-project-roots))))
 
@@ -1589,7 +1605,7 @@ It's also possible to enter an arbitrary directory not in the list."
 
 
 
-;;;###autoload (autoload 'projel-menu "projel.el" nil t)
+;;;###autoload (autoload 'projel-menu "projel" nil t)
 (transient-define-prefix projel-menu ()
   "Menu for project commands."
   [:description
