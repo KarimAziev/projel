@@ -723,7 +723,7 @@ CURRENT-DEPTH is used for recoursive purposes."
   (setq current-depth (1+ (or current-depth 0)))
   (unless max-depth (setq max-depth 1))
   (when (>= max-depth current-depth)
-    (let ((tramp-archive-enabled nil))
+    (let ((non-essential t))
       (let ((found-dirs))
         (let
             ((default-directory (expand-file-name (file-name-as-directory dir))))
