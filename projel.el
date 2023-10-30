@@ -1546,15 +1546,7 @@ by the user at will.
                       (mapcar #'car alist))))
     (expand-file-name
      (minibuffer-with-setup-hook
-         (lambda ()
-           (when (active-minibuffer-window)
-             (setq-local minibuffer-default-add-function
-                         (lambda ()
-                           (let ((minibuffer-default mb-default))
-                             (minibuffer-default-add-completions))))
-             (use-local-map
-              (make-composed-keymap projel-minibuffer-map
-                                    (current-local-map)))))
+         #'projel-setup-minibuffer
        (completing-read prompt
                         (lambda (str pred action)
                           (if (eq action 'metadata)
