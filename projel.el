@@ -127,6 +127,23 @@ If the string exceeds this limit, it will be truncated to fit."
   :type 'boolean
   :group 'projel)
 
+(defcustom projel-display-modified-time 'projel-format-time-readable
+  "Whether to display modified time for projects.
+
+If it is a nil, don't display modified time.
+
+If it is a function, it will be called with one argument -
+the modification time in the style of `current-time' and should return a string.
+
+If it is a string, it should be the format-string for `format-time-string'."
+  :type '(radio (const :tag "Don't display time" nil)
+                (function-item projel-format-time-readable)
+                (string
+                 :tag "Time Format"
+                 :value "%b %d %Y")
+                (function :tag "Custom formatter"))
+  :group 'projel)
+
 
 (defcustom projel-projects-actions-alist '(("*Rescan all projects*" .
                                             projel-rescan-all-projects)
@@ -772,6 +789,9 @@ Return alist of added projects."
   (let ((results))
     (projel-find-in-dir dir #'project--find-in-directory
                         (append
+                         (list (apply-partially #'string-match-p
+                                                vc-ignore-dir-regexp))
+                         vc-directory-exclusion-list
                          projel-projects-exlcuded-non-directory-names
                          (mapcar
                           (apply-partially #'apply-partially 'file-equal-p)
@@ -781,8 +801,9 @@ Return alist of added projects."
                           (let ((proj
                                  (file-name-as-directory (abbreviate-file-name
                                                           dir))))
-                            (unless (assoc-string proj
-                                                  project--list)
+                            (unless (or (assoc-string proj
+                                                      project--list)
+                                        (assoc-string proj results))
                               (setq results (push (list proj) results)))
                             proj)))
     (when results
@@ -790,6 +811,57 @@ Return alist of added projects."
       (when write
         (projel--write-project-list)))
     results))
+
+(defun projel-current-project-dirs ()
+  "Explore projects in DIR at max depth MAX-DEPTH.
+If WRITE is non nil, write found projects.
+Return alist of added projects."
+  (let ((proj-root (projel-current-project-root)))
+    (nreverse (projel-find-in-dir
+               proj-root
+               nil
+               (let ((default-directory (expand-file-name proj-root)))
+                 (delq nil
+                       (mapcar (lambda (it)
+                                 (when (string-prefix-p "." it)
+                                   it))
+                               (directory-files proj-root nil
+                                                directory-files-no-dot-files-regexp))))
+               most-positive-fixnum))))
+
+
+(defun projel-current-project-files ()
+  "Explore projects in DIR at max depth MAX-DEPTH.
+If WRITE is non nil, write found projects.
+Return alist of added projects."
+  (let ((proj-root (projel-current-project-root))
+        (files))
+    (projel-find-in-dir
+     proj-root
+     nil
+     (let ((default-directory
+            (expand-file-name proj-root)))
+       (delq nil
+             (mapcar (lambda (it)
+                       (when (or (string-prefix-p "." it)
+                                 (member it
+                                         projel-projects-exlcuded-non-directory-names)
+                                 (string= "public" it))
+                         it))
+                     (directory-files proj-root nil
+                                      directory-files-no-dot-files-regexp))))
+     most-positive-fixnum
+     (lambda (dir)
+       (setq files (nconc files
+                          (seq-remove
+                           #'file-directory-p
+                           (directory-files dir t directory-files-no-dot-files-regexp))))))
+    (nreverse (seq-sort-by (lambda (it)
+                             (file-attribute-modification-time (file-attributes
+                                                                it)))
+                           #'time-less-p
+                           (mapcar #'abbreviate-file-name files)))))
+
 
 ;;;###autoload
 (defun projel-add-projects-to-magit-repositories-dirs ()
@@ -859,7 +931,9 @@ If CHECK-EXISTING is non nil, also remove dead projects."
       (let ((print-length nil)
             (print-level nil)
             (print-circle nil))
-        (insert (prin1-to-string project--list)))
+        (insert (prin1-to-string (mapcar (pcase-lambda (`(,k . ,v))
+                                           (cons (substring-no-properties k) v))
+                                         project--list))))
       (write-region nil nil filename nil 'silent))))
 
 (defun projel--ensure-read-project-list ()
@@ -1437,21 +1511,65 @@ If TRANSFORM-FN is non nil, it wil be called with each candidate."
 
 (defun projel--read-file-cpd-relative (prompt all-files &optional predicate hist
                                               mb-default)
-  "Apply `project--read-file-cpd-relative' with preview and keymap setup.
-\\<projel-minibuffer-map>\\{projel-minibuffer-map}.
+  "Read a file name, prompting with PROMPT.
 
 ALL-FILES is a list of possible file name completions.
 
-PROMPT, PREDICATE and HIST have the same meaning as in `completing-read'.
+PREDICATE and HIST have the same meaning as in `completing-read'.
 
 MB-DEFAULT is used as part of \"future history\", to be inserted
-by the user at will."
-  (minibuffer-with-setup-hook
-      #'projel-setup-minibuffer
-    (project--read-file-cpd-relative prompt
-                                     all-files
-                                     predicate hist
-                                     mb-default)))
+by the user at will.
+\\<projel-minibuffer-map>\\{projel-minibuffer-map}."
+  (let* ((proj-root (projel-current-project-root))
+         (curr-file (and buffer-file-name
+                         proj-root
+                         (substring-no-properties
+                          (abbreviate-file-name buffer-file-name)
+                          (length proj-root))))
+         (alist (projel-current-files-to-alist
+                 (remove buffer-file-name all-files)
+                 proj-root))
+         (len 80)
+         (annotf (lambda (str)
+                   (or
+                    (when-let ((time (cdr (assoc str alist))))
+                      (when (length> str len)
+                        (setq len (1+ (length str))))
+                      (concat
+                       (propertize " " 'display
+                                   (list 'space :align-to
+                                         len))
+                       (projel-format-time-readable time)))
+                    "")))
+         (category 'file)
+         (cands (delq curr-file
+                      (mapcar #'car alist))))
+    (expand-file-name
+     (minibuffer-with-setup-hook
+         (lambda ()
+           (when (active-minibuffer-window)
+             (setq-local minibuffer-default-add-function
+                         (lambda ()
+                           (let ((minibuffer-default mb-default))
+                             (minibuffer-default-add-completions))))
+             (use-local-map
+              (make-composed-keymap projel-minibuffer-map
+                                    (current-local-map)))))
+       (completing-read prompt
+                        (lambda (str pred action)
+                          (if (eq action 'metadata)
+                              `(metadata
+                                (annotation-function . ,annotf)
+                                (category . ,category))
+                            (complete-with-action action cands
+                                                  str pred)))
+                        predicate 'confirm
+                        nil
+                        hist
+                        (when (and mb-default (file-exists-p mb-default)
+                                   (not (equal mb-default buffer-file-name)))
+                          mb-default)))
+     proj-root)))
 
 (defun projel-project-action-candidate-p (completion)
   "Check whether COMPLETION is not real project directory, but an action."
@@ -1494,45 +1612,63 @@ by the user at will."
 FMT is a format control string with 2 %s placeholders.
 CURRENT-PROJECT is a current project directory or nil.
 META-CANDIDATES is a list of strings that shouldn't be annotated."
-  (let ((project-default-type
-         (make-string projel-annotation-project-type-max-width ?\s))
-        (meta-candidates (projel-projects-action-candidates))
-        (fmt
-         (let ((longest (if alist
-                            (+ 5
-                               (apply #'max (mapcar
-                                             (projel--compose
-                                               length
-                                               car)
-                                             alist)))
-                          10)))
-           (concat
-            (propertize " " 'display
-                        `(space
-                          :align-to
-                          ,longest))
-            " %s"
-            (propertize " " 'display
-                        `(space
-                          :align-to
-                          ,(+ longest
-                              projel-annotation-project-type-max-width)))
-            " %s"))))
+  (let* ((project-default-type
+          (make-string projel-annotation-project-type-max-width ?\s))
+         (meta-candidates (projel-projects-action-candidates))
+         (longest)
+         (time-formatter
+          (cond ((functionp
+                  projel-display-modified-time)
+                 projel-display-modified-time)
+                ((stringp projel-display-modified-time)
+                 (apply-partially #'format-time-string
+                                  projel-display-modified-time))))
+         (fmt))
+    (setq longest (if alist
+                      (+ 5
+                         (apply #'max (mapcar
+                                       (projel--compose
+                                         length
+                                         car)
+                                       alist)))
+                    10))
+    (setq fmt (concat
+               (propertize " " 'display
+                           `(space
+                             :align-to
+                             ,longest))
+               " %s"
+               (propertize " " 'display
+                           `(space
+                             :align-to
+                             ,(+ longest
+                                 projel-annotation-project-type-max-width)))
+               " %s"))
     (lambda (it)
       (cond ((seq-find
               (apply-partially #'string= it) meta-candidates)
              "")
             (t
              (let ((proj-type (projel-annotate-project-type it))
-                   (descr (projel-annotate-project-description it)))
+                   (descr
+                    (projel-annotate-project-description it)))
                (if (and (not proj-type)
                         (not descr))
                    ""
                  (format fmt
-                         (or (projel-annotate-project-type it)
-                             project-default-type)
-                         (or (projel-annotate-project-description it)
-                             "")))))))))
+                         (concat (or proj-type
+                                     project-default-type
+                                     " ")
+                                 " "
+                                 (when time-formatter
+                                   (funcall time-formatter
+                                            (file-attribute-modification-time
+                                             (file-attributes
+                                              it))))
+                                 " ")
+                         (or
+                          descr
+                          "")))))))))
 
 (defun projel-project--file-completion-table (alist &optional annotate-fn)
   "Completion table for project ALIST of projects with annotations ANNOTATE-FN."
@@ -1548,7 +1684,11 @@ META-CANDIDATES is a list of strings that shouldn't be annotated."
                               nil)
                              ((seq-find (apply-partially #'string= b) meta)
                               t)
-                             (t (file-newer-than-file-p a b))))))))
+                             (t (file-newer-than-file-p a b)))))))
+         (sorted-cands (sort alist
+                             (lambda (a b)
+                               (file-newer-than-file-p (car a)
+                                                       (car b))))))
     (lambda (str pred action)
       (if (eq action 'metadata)
           `(metadata
@@ -1556,7 +1696,7 @@ META-CANDIDATES is a list of strings that shouldn't be annotated."
             (group-function . projel-group-fn)
             (display-sort-function . ,sort-fn)
             (category . project-root))
-        (complete-with-action action alist str pred)))))
+        (complete-with-action action sorted-cands str pred)))))
 
 
 
@@ -1602,6 +1742,92 @@ It's also possible to enter an arbitrary directory not in the list."
   "Get saved or standard value for SYM."
   (or (car (get sym 'saved-value))
       (eval (car (get sym 'standard-value)))))
+
+(defun projel-format-time-readable (time)
+  "Calculate and format the time difference from the current TIME.
+
+Argument TIME is the time value that will be compared with the current time to
+calculate the time difference."
+  (let ((diff-secs (-
+                    (float-time (current-time))
+                    (float-time time))))
+    (pcase-let ((`(,format-str . ,value)
+                 (cond ((< diff-secs 60)
+                        (cons "%d second" (truncate diff-secs)))
+                       ((< diff-secs 3600)
+                        (cons "%d minute" (truncate (/ diff-secs 60))))
+                       ((< diff-secs 86400)
+                        (cons "%d hour" (truncate (/ diff-secs 3600))))
+                       ((< diff-secs 2592000)
+                        (cons "%d day" (truncate (/ diff-secs 86400))))
+                       (t
+                        (cons "%d month" (truncate (/ diff-secs 2592000)))))))
+      (format (concat format-str (if (= value 1) " ago" "s ago")) value))))
+
+(defun projel-project-root-files (proj-root)
+  "List all non-directory files in a given project root PROJ-ROOT."
+  (let ((files))
+    (projel-find-in-dir
+     proj-root
+     nil
+     (let ((default-directory
+            (expand-file-name proj-root)))
+       (delq nil
+             (mapcar (lambda (it)
+                       (when (or
+                              (member it
+                                      projel-projects-exlcuded-non-directory-names)
+                              (member it
+                                      vc-directory-exclusion-list))
+                         it))
+                     (directory-files proj-root nil
+                                      directory-files-no-dot-files-regexp
+                                      t))))
+     most-positive-fixnum
+     (lambda (dir)
+       (setq files
+             (nconc files
+                    (seq-remove
+                     #'file-directory-p
+                     (directory-files dir t
+                                      directory-files-no-dot-files-regexp))))))))
+
+(defun projel-current-files-to-alist (files &optional proj-root)
+  "Sort FILES by modification time and return as an associative list.
+
+Argument FILES is a list of FILES to be processed by the function.
+
+Optional argument PROJ-ROOT is a string representing the root directory of the
+project, with no default value."
+  (when proj-root (setq proj-root (file-name-directory
+                                   (abbreviate-file-name proj-root))))
+  (message "projel-current-files-to-alist
+            | Files  | %s"
+           files)
+  (nreverse (seq-sort-by
+             (pcase-lambda (`(,_k . ,v)) v)
+             #'time-less-p
+             (mapcar
+              (lambda (file)
+                (cons
+                 (if proj-root
+                     (substring-no-properties (abbreviate-file-name
+                                               file)
+                                              (length proj-root))
+                   (abbreviate-file-name file))
+                 (file-attribute-modification-time
+                  (file-attributes
+                   file))))
+              files))))
+
+
+(defun projel-current-project-files-alist ()
+  "Sort and return project files by modification time."
+  (when-let* ((proj-root (projel-current-project-root))
+              (files (project-files (project-current t proj-root))))
+    (projel-current-files-to-alist
+     proj-root
+     (project-files (project-current t proj-root)))))
 
 
 
