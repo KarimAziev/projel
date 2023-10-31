@@ -1793,9 +1793,6 @@ Optional argument PROJ-ROOT is a string representing the root directory of the
 project, with no default value."
   (when proj-root (setq proj-root (file-name-directory
                                    (abbreviate-file-name proj-root))))
-  (message "projel-current-files-to-alist
-            | Files  | %s"
-           files)
   (nreverse (seq-sort-by
              (pcase-lambda (`(,_k . ,v)) v)
              #'time-less-p
