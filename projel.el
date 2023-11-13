@@ -1570,7 +1570,7 @@ by the user at will.
 
 (defun projel-current-project-root ()
   "Return project root directory."
-  (when-let ((project (project-current)))
+  (when-let ((project (ignore-errors (project-current))))
     (if (fboundp 'project-root)
         (project-root project)
       (with-no-warnings
