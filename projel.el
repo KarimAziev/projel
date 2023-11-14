@@ -52,6 +52,7 @@
 
 
 (defcustom projel-projects-exlcuded-non-directory-names	'(".cache"
+
                                                           ".config"
                                                           ".local"
                                                           ".Trash"
@@ -806,9 +807,10 @@ Return alist of added projects."
                               (setq results (push (list proj) results)))
                             proj)))
     (when results
-      (setq project--list (nconc results project--list))
+      (setq project--list (append results project--list))
       (when write
         (projel--write-project-list)))
+
     results))
 
 (defun projel-current-project-dirs ()
@@ -851,10 +853,10 @@ Return alist of added projects."
                                       directory-files-no-dot-files-regexp))))
      most-positive-fixnum
      (lambda (dir)
-       (setq files (nconc files
-                          (seq-remove
-                           #'file-directory-p
-                           (directory-files dir t directory-files-no-dot-files-regexp))))))
+       (setq files (append files
+                           (seq-remove
+                            #'file-directory-p
+                            (directory-files dir t directory-files-no-dot-files-regexp))))))
     (nreverse (seq-sort-by (lambda (it)
                              (file-attribute-modification-time (file-attributes
                                                                 it)))
@@ -880,7 +882,8 @@ Return alist of added projects."
 (defun projel-rescan-all (&optional depth)
   "Explore projects in DIR at max depth DEPTH.
 If CHECK-EXISTING is non nil, also remove dead projects."
-  (let ((existing-projects
+  (let ((non-essential t)
+        (existing-projects
          (seq-filter (projel--compose file-exists-p car)
                      project--list))
         (dead-projects))
@@ -905,7 +908,7 @@ If CHECK-EXISTING is non nil, also remove dead projects."
                              projel-explore-project-depth))
                        t))))
           (setq results
-                (nconc results res))
+                (append results res))
           (when (and projel-allow-magit-repository-directories-sync
                      (boundp 'magit-repository-directories))
             (add-to-list 'magit-repository-directories (list dir 1)))))
