@@ -587,11 +587,10 @@ commands."
            (when (file-exists-p current)
              current))
           (t
-           (when-let* ((project (project-current))
-                       (root (if (fboundp 'project-root)
-                                 (project-root project)
-                               (with-no-warnings
-                                 (car (project-roots project)))))
+           (when-let* ((root (or
+                              (with-minibuffer-selected-window
+                                project-current-directory-override)
+                              (projel-current-project-root)))
                        (file (expand-file-name current root)))
              (when (file-exists-p file)
                file))))))
@@ -1523,9 +1522,13 @@ by the user at will.
   (let* ((proj-root (projel-current-project-root))
          (curr-file (and buffer-file-name
                          proj-root
-                         (substring-no-properties
-                          (abbreviate-file-name buffer-file-name)
-                          (length proj-root))))
+                         (let ((expanded-file
+                                (expand-file-name buffer-file-name))
+                               (expanded-proj (expand-file-name proj-root)))
+                           (when (string-prefix-p expanded-proj expanded-file)
+                             (substring-no-properties
+                              expanded-file
+                              (length expanded-proj))))))
          (alist (projel-current-files-to-alist
                  (remove buffer-file-name all-files)
                  proj-root))
