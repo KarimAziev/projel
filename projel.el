@@ -810,58 +810,7 @@ Return alist of added projects."
       (setq project--list (append results project--list))
       (when write
         (projel--write-project-list)))
-
     results))
-
-(defun projel-current-project-dirs ()
-  "Explore projects in DIR at max depth MAX-DEPTH.
-If WRITE is non nil, write found projects.
-Return alist of added projects."
-  (let ((proj-root (projel-current-project-root)))
-    (nreverse (projel-find-in-dir
-               proj-root
-               nil
-               (let ((default-directory (expand-file-name proj-root)))
-                 (delq nil
-                       (mapcar (lambda (it)
-                                 (when (string-prefix-p "." it)
-                                   it))
-                               (directory-files proj-root nil
-                                                directory-files-no-dot-files-regexp))))
-               most-positive-fixnum))))
-
-
-(defun projel-current-project-files ()
-  "Explore projects in DIR at max depth MAX-DEPTH.
-If WRITE is non nil, write found projects.
-Return alist of added projects."
-  (let ((proj-root (projel-current-project-root))
-        (files))
-    (projel-find-in-dir
-     proj-root
-     nil
-     (let ((default-directory
-            (expand-file-name proj-root)))
-       (delq nil
-             (mapcar (lambda (it)
-                       (when (or (string-prefix-p "." it)
-                                 (member it
-                                         projel-projects-exlcuded-non-directory-names)
-                                 (string= "public" it))
-                         it))
-                     (directory-files proj-root nil
-                                      directory-files-no-dot-files-regexp))))
-     most-positive-fixnum
-     (lambda (dir)
-       (setq files (append files
-                           (seq-remove
-                            #'file-directory-p
-                            (directory-files dir t directory-files-no-dot-files-regexp))))))
-    (nreverse (seq-sort-by (lambda (it)
-                             (file-attribute-modification-time (file-attributes
-                                                                it)))
-                           #'time-less-p
-                           (mapcar #'abbreviate-file-name files)))))
 
 
 ;;;###autoload
@@ -879,9 +828,15 @@ Return alist of added projects."
              (length
               added))))
 
-(defun projel-rescan-all (&optional depth)
-  "Explore projects in DIR at max depth DEPTH.
-If CHECK-EXISTING is non nil, also remove dead projects."
+(defun projel-rescan-all (&optional depth no-write)
+  "Rescan directories, update project list, and sync with Magit if enabled.
+
+Optional argument DEPTH is an integer specifying the maximum depth to search for
+projects. It defaults to the value of `projel-explore-project-depth' if not
+provided.
+
+Optional argument NO-WRITE is a boolean that, when non-nil, prevents the
+function from writing the updated project list to disk. It defaults to nil."
   (let ((non-essential t)
         (existing-projects
          (seq-filter (projel--compose file-exists-p car)
@@ -904,16 +859,18 @@ If CHECK-EXISTING is non nil, also remove dead projects."
                       (projel-find-projects-in-dir
                        dir
                        (or depth
-                           (if dirs 1
+                           (if dirs
+                               1
                              projel-explore-project-depth))
-                       t))))
+                       nil))))
           (setq results
                 (append results res))
           (when (and projel-allow-magit-repository-directories-sync
                      (boundp 'magit-repository-directories))
             (add-to-list 'magit-repository-directories (list dir 1)))))
       (when (or dead-projects results)
-        (projel--write-project-list)
+        (unless no-write
+          (projel--write-project-list))
         (message
          "Projel: %s"
          (string-join
@@ -996,8 +953,10 @@ to `default-directory', and the result will also be relative."
 (defun projel-get-projects-parent-dirs ()
   "Return list of git parents directories."
   (projel--ensure-read-project-list)
-  (delete-dups (mapcar #'projel-file-name-parent-directory
-                       (project-known-project-roots))))
+  (delete-dups (mapcar (projel--compose
+                         projel-file-name-parent-directory
+                         car)
+                       project--list)))
 
 (defvar projel-minibuffer-map
   (let ((map (make-sparse-keymap)))
@@ -1078,7 +1037,7 @@ with DIR and DEPTH."
   "Rescan parent directories of current projects."
   (interactive)
   (if (active-minibuffer-window)
-      (throw 'action (list 'projel-rescan-all ))
+      (throw 'action (list 'projel-rescan-all))
     (projel-rescan-all)))
 
 (defvar projel-minibuffer-project-map
@@ -1378,12 +1337,15 @@ It checks whether current directory files includes first car in
                                       projel-get-project-by-files-extensions))
 
 (defun projel-get-project-languages ()
-  "Return PROJECT descriptions."
+  "Retrieve programming languages used in the current project directory."
   (when (fboundp 'github-linguist-lookup)
     (github-linguist-lookup default-directory)))
 
 (defun projel-get-project-type (project)
-  "Return PROJECT descriptions."
+  "Determine PROJECT type by running hooks on project directory.
+
+Argument PROJECT is the directory or file path for which to determine the
+PROJECT type."
   (let (target)
     (run-hook-wrapped
      'projel-project-type-finders
@@ -1418,7 +1380,9 @@ It checks whether current directory files includes first car in
                                      'description)))
 
 (defun projel-get-project-descriptions (project)
-  "Return PROJECT descriptions."
+  "Retrieve PROJECT descriptions using registered finder functions.
+
+Argument PROJECT is a string representing the path to the project directory."
   (let (target)
     (run-hook-wrapped
      'projel-project-descriptions-finders
@@ -1462,14 +1426,6 @@ See `projel-auto-preview-delay'."
   "Setup minibuffer to use `projel-minibuffer-project-map' in minibuffer.
 Also setup auto preview if value of `projel-auto-preview-delay' is a number."
   (projel--setup-minibuffer projel-minibuffer-project-map))
-
-(defun projel-sort-files-alist (files)
-  "Sort alist of FILES."
-  (let ((sorted-files (seq-sort-by
-                       (projel--or car-safe identity)
-                       #'file-newer-than-file-p
-                       files)))
-    sorted-files))
 
 (defun projel-sort-project (files)
   "Sort alist of FILES."
