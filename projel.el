@@ -169,6 +169,21 @@ If it is a string, it should be the format-string for `format-time-string'."
   :group 'projel
   :type 'string)
 
+(defcustom projel-ensure-prompt-spaced t
+  "Whether to ensure a space at the end of prompts.
+
+Determines whether to automatically append a space to the end of prompts when
+they do not already end with one.
+
+When non-nil, any prompt lacking a trailing space will have one added. If nil,
+prompts will be used as provided without modification.
+
+The default value is t, which enables the addition of a space.
+
+To change this behavior, set the value to nil."
+  :group 'projel
+  :type 'boolean)
+
 (defvar projel-file-name-indicators
   '((("dune-project")
      . "Dune-Project")
@@ -1467,6 +1482,15 @@ If TRANSFORM-FN is non nil, it wil be called with each candidate."
          strings)
       strings)))
 
+(defun projel--format-prompt (prompt)
+  "Ensure PROMPT ends with a space, unless configured otherwise.
+
+Argument PROMPT is a string used as the prompt text."
+  (if (or (not projel-ensure-prompt-spaced)
+          (string-suffix-p " " prompt))
+      prompt
+    (concat prompt " ")))
+
 (defun projel--read-file-cpd-relative (prompt all-files &optional predicate hist
                                               mb-default)
   "Read a file name, prompting with PROMPT.
@@ -1503,13 +1527,13 @@ by the user at will.
                                          len))
                        (projel-format-time-readable time)))
                     "")))
-         (category 'file)
+         (category 'project-file)
          (cands (delq curr-file
                       (mapcar #'car alist))))
     (expand-file-name
      (minibuffer-with-setup-hook
          #'projel-setup-minibuffer
-       (completing-read prompt
+       (completing-read (projel--format-prompt prompt)
                         (lambda (str pred action)
                           (if (eq action 'metadata)
                               `(metadata
