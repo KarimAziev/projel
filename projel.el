@@ -1793,7 +1793,7 @@ project, with no default value."
                  (file-attribute-modification-time
                   (file-attributes
                    file))))
-              files))))
+              (seq-filter #'file-exists-p files)))))
 
 
 (defun projel-current-project-files-alist ()
