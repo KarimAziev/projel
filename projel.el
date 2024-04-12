@@ -882,7 +882,7 @@ function from writing the updated project list to disk. It defaults to nil."
                 (append results res))
           (when (and projel-allow-magit-repository-directories-sync
                      (boundp 'magit-repository-directories))
-            (add-to-list 'magit-repository-directories (list dir 1)))))
+            (add-to-list 'magit-repository-directories (cons dir 1)))))
       (when (or dead-projects results)
         (unless no-write
           (projel--write-project-list))
