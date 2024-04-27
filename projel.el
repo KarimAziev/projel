@@ -26,7 +26,9 @@
 
 ;;; Commentary:
 
-;; This file configures operations with project
+;; Minor mode that enhance Emacs builtin project.el with annotations, sorting,
+;; grouping and additional keymaps. Support various completion systems -
+;; default, ivy, fido, ido, icomplete etc.
 
 ;;; Code:
 
