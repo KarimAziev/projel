@@ -51,8 +51,7 @@
   :group 'projel)
 
 
-(defcustom projel-projects-exlcuded-non-directory-names	'(".cache"
-
+(defcustom projel-projects-exlcuded-non-directory-names '(".cache"
                                                           ".config"
                                                           ".local"
                                                           ".Trash"
