@@ -607,6 +607,7 @@ commands."
            (when-let* ((root (or
                               (with-minibuffer-selected-window
                                 project-current-directory-override)
+                              project-current-directory-override
                               (projel-current-project-root)))
                        (file (expand-file-name current root)))
              (when (file-exists-p file)
@@ -1492,9 +1493,9 @@ Argument PROMPT is a string used as the prompt text."
       prompt
     (concat prompt " ")))
 
-(defun projel--read-file-cpd-relative (prompt all-files &optional predicate hist
-                                              mb-default)
-  "Read a file name, prompting with PROMPT.
+(defun projel--read-files-in-dir-relative (prompt proj-root all-files &optional
+                                                  predicate hist mb-default)
+  "Read a file name in PROJ-ROOT, prompting with PROMPT.
 
 ALL-FILES is a list of possible file name completions.
 
@@ -1503,19 +1504,23 @@ PREDICATE and HIST have the same meaning as in `completing-read'.
 MB-DEFAULT is used as part of \"future history\", to be inserted
 by the user at will.
 \\<projel-minibuffer-map>\\{projel-minibuffer-map}."
-  (let* ((proj-root (projel-current-project-root))
+  (let* ((project-current-directory-override (file-name-as-directory
+                                              proj-root))
          (curr-file (and buffer-file-name
-                         proj-root
+                         project-current-directory-override
                          (let ((expanded-file
                                 (expand-file-name buffer-file-name))
-                               (expanded-proj (expand-file-name proj-root)))
+                               (expanded-proj
+                                (file-name-as-directory
+                                 (expand-file-name
+                                  project-current-directory-override))))
                            (when (string-prefix-p expanded-proj expanded-file)
                              (substring-no-properties
                               expanded-file
                               (length expanded-proj))))))
          (alist (projel-current-files-to-alist
                  (remove buffer-file-name all-files)
-                 proj-root))
+                 project-current-directory-override))
          (len 80)
          (annotf (lambda (str)
                    (or
@@ -1548,7 +1553,38 @@ by the user at will.
                         (when (and mb-default (file-exists-p mb-default)
                                    (not (equal mb-default buffer-file-name)))
                           mb-default)))
-     proj-root)))
+     project-current-directory-override)))
+
+(defvar org-directory)
+
+;;;###autoload
+(defun projel-find-org-file (&optional arg)
+  "Open an org file from the `org-directory'.
+
+With optional argument ARG is non nil, open file in another window."
+  (interactive "P")
+  (require 'org)
+  (let ((file (projel--read-files-in-dir-relative "File: " org-directory
+                                                   (directory-files-recursively
+                                                    org-directory
+                                                    "\\.org\\'"))))
+    (funcall (if arg #'find-file-other-window
+               #'find-file)
+             file)))
+
+(defun projel--read-file-cpd-relative (prompt all-files &optional predicate hist
+                                              mb-default)
+  "Read a file name, prompting with PROMPT.
+
+ALL-FILES is a list of possible file name completions.
+
+PREDICATE and HIST have the same meaning as in `completing-read'.
+
+MB-DEFAULT is used as part of \"future history\", to be inserted
+by the user at will.
+\\<projel-minibuffer-map>\\{projel-minibuffer-map}."
+  (projel--read-files-in-dir-relative prompt (projel-current-project-root)
+                                       all-files predicate hist mb-default))
 
 (defun projel-project-action-candidate-p (completion)
   "Check whether COMPLETION is not real project directory, but an action."
