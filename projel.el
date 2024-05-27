@@ -1816,21 +1816,22 @@ Optional argument PROJ-ROOT is a string representing the root directory of the
 project, with no default value."
   (when proj-root (setq proj-root (file-name-directory
                                    (abbreviate-file-name proj-root))))
-  (nreverse (seq-sort-by
-             (pcase-lambda (`(,_k . ,v)) v)
-             #'time-less-p
-             (mapcar
-              (lambda (file)
-                (cons
-                 (if proj-root
-                     (substring-no-properties (abbreviate-file-name
-                                               file)
-                                              (length proj-root))
-                   (abbreviate-file-name file))
-                 (file-attribute-modification-time
-                  (file-attributes
-                   file))))
-              (seq-filter #'file-exists-p files)))))
+  (let ((len (and proj-root (length proj-root))))
+    (nreverse (seq-sort-by
+               (pcase-lambda (`(,_k . ,v)) v)
+               #'time-less-p
+               (mapcar
+                (lambda (file)
+                  (cons
+                   (if (and proj-root len (string-prefix-p proj-root file))
+                       (substring-no-properties (abbreviate-file-name
+                                                 file)
+                                                len)
+                     (abbreviate-file-name file))
+                   (file-attribute-modification-time
+                    (file-attributes
+                     file))))
+                (seq-filter #'file-exists-p files))))))
 
 
 (defun projel-current-project-files-alist ()
