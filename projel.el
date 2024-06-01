@@ -1504,7 +1504,24 @@ PREDICATE and HIST have the same meaning as in `completing-read'.
 MB-DEFAULT is used as part of \"future history\", to be inserted
 by the user at will.
 \\<projel-minibuffer-map>\\{projel-minibuffer-map}."
-  (let* ((project-current-directory-override (file-name-as-directory
+  (let* ((non-essential t)
+         (mb-default
+          (mapcar
+           (lambda (mb-default)
+             (cond ((not mb-default) nil)
+                   ((and
+                     mb-default
+                     (file-name-absolute-p mb-default)
+                     (file-exists-p mb-default))
+                    mb-default)
+                   ((file-exists-p (expand-file-name mb-default
+                                                     default-directory))
+                    (expand-file-name mb-default default-directory))
+                   ((and proj-root (file-exists-p (expand-file-name
+                                                   mb-default proj-root)))
+                    (expand-file-name mb-default proj-root))))
+           (if (listp mb-default) mb-default (list mb-default))))
+         (project-current-directory-override (file-name-as-directory
                                               proj-root))
          (curr-file (and buffer-file-name
                          project-current-directory-override
@@ -1550,9 +1567,7 @@ by the user at will.
                         predicate 'confirm
                         nil
                         hist
-                        (when (and mb-default (file-exists-p mb-default)
-                                   (not (equal mb-default buffer-file-name)))
-                          mb-default)))
+                        mb-default))
      project-current-directory-override)))
 
 (defvar org-directory)
