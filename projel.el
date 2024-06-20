@@ -1598,8 +1598,8 @@ PREDICATE and HIST have the same meaning as in `completing-read'.
 MB-DEFAULT is used as part of \"future history\", to be inserted
 by the user at will.
 \\<projel-minibuffer-map>\\{projel-minibuffer-map}."
-  (projel--read-files-in-dir-relative prompt (projel-current-project-root)
-                                       all-files predicate hist mb-default))
+  (projel--read-files-in-dir-relative prompt default-directory
+                                      all-files predicate hist mb-default))
 
 (defun projel-project-action-candidate-p (completion)
   "Check whether COMPLETION is not real project directory, but an action."
