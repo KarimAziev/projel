@@ -569,30 +569,6 @@ completion UI highly compatible with it, like Icomplete."
     (when-let ((win (get-buffer-window "*Completions*" 0)))
       (fit-window-to-buffer win completions-max-height))))
 
-(defun projel-hide-completions-wind ()
-  "Temporarly minimize *Completions* window."
-  (when-let ((win (get-buffer-window "*Completions*" 0)))
-    (minimize-window win)
-    (add-hook 'post-command-hook #'projel-restore-completions-wind)))
-
-(defun projel-action-no-exit (action)
-  "Call ACTION with minibuffer candidate in its original window.
-Also `minimize-window' *Completions* window if any and restore at
-after `minibuffer-previous-completion' or `minibuffer-next-completion'
-commands."
-  (pcase-let ((`(,_category . ,current)
-               (projel-minibuffer-current-candidate)))
-    (projel-hide-completions-wind)
-    (with-minibuffer-selected-window
-      (funcall action current))))
-
-(defun projel--exit-with-action (action)
-  "Call ACTION with current minibuffer candidate and exit minibuffer."
-  (pcase-let ((`(,_category . ,current)
-               (projel-minibuffer-current-candidate)))
-    (progn (run-with-timer 0.1 nil action current)
-           (abort-minibuffers))))
-
 (defun projel-current-minibuffer-file ()
   "Return absolute filename for current minibuffer candidate or nil."
   (pcase-let* ((`(,_category . ,current)
@@ -712,16 +688,6 @@ Instead it uses a temporarly buffer `projel-preview-buffer-name'."
               (setq header-line-format
                     (abbreviate-file-name file)))))))))
 
-(defun projel-git-top-level-non-git-dir ()
-  "Traverse up to non-git directory."
-  (let ((dir)
-        (curr default-directory))
-    (while (setq dir
-                 (when curr
-                   (locate-dominating-file curr ".git")))
-      (setq curr (projel-file-name-parent-directory dir)))
-    curr))
-
 (defun projel-expand-pattern (curr pattern)
   "Recoursively expand PATTERN for string CURR.
 PATTERN can be either string or function, or list of strings and functions."
@@ -767,7 +733,7 @@ CURRENT-DEPTH is used for recoursive purposes."
                                 directory-files-no-dot-files-regexp t))
             (let ((full-dir (expand-file-name curr))
                   (tramp-archive-enabled nil))
-              (cond ((not (file-directory-p full-dir)))
+              (cond ((not (file-accessible-directory-p full-dir)))
                     ((and non-visit-pattern
                           (projel-expand-pattern curr non-visit-pattern)))
                     ((and pattern
@@ -1085,22 +1051,6 @@ with DIR and DEPTH."
                     unread-command-events))
       (when (overlayp overlay)
         (delete-overlay overlay)))))
-
-
-(defun projel-run-js-project (orig-fn arg)
-  "In js projects invoke custom command, otherwise just call ORIG-FN with ARG."
-  (if (not (locate-dominating-file default-directory "package.json"))
-      (funcall orig-fn arg)
-    (cond ((locate-dominating-file default-directory "yarn.lock")
-           (progn
-             (require 'yarn)
-             (when (fboundp 'yarn-run)
-               (yarn-run))))
-          ((locate-dominating-file default-directory
-                                   "package.json")
-           (require 'npmjs)
-           (when (fboundp 'npmjs-run-script)
-             (npmjs-run-script))))))
 
 (defun projel--completing-read-node-modules (prompt &rest _)
   "Read closest to current directory files in node_modules with PROMPT.
@@ -1443,17 +1393,6 @@ See `projel-auto-preview-delay'."
   "Setup minibuffer to use `projel-minibuffer-project-map' in minibuffer.
 Also setup auto preview if value of `projel-auto-preview-delay' is a number."
   (projel--setup-minibuffer projel-minibuffer-project-map))
-
-(defun projel-sort-project (files)
-  "Sort alist of FILES."
-  (let* ((meta (projel-projects-action-candidates))
-         (sorted-files (seq-sort
-                        (lambda (a b)
-                          (if (seq-find (apply-partially #'string= a) meta)
-                              nil
-                            (file-newer-than-file-p a b)))
-                        files)))
-    sorted-files))
 
 (defun projel-group-fn (str &optional transform)
   "A function for grouping projects during the minibuffer completion.
@@ -1847,15 +1786,6 @@ project, with no default value."
                     (file-attributes
                      file))))
                 (seq-filter #'file-exists-p files))))))
-
-
-(defun projel-current-project-files-alist ()
-  "Sort and return project files by modification time."
-  (when-let* ((proj-root (projel-current-project-root))
-              (files (project-files (project-current t proj-root))))
-    (projel-current-files-to-alist
-     proj-root
-     (project-files (project-current t proj-root)))))
 
 
 
