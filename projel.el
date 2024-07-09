@@ -42,11 +42,6 @@
   :type '(repeat directory)
   :group 'projel)
 
-(defcustom projel-projects-ignored-projects nil
-  "List of ignored projects."
-  :type '(repeat directory)
-  :group 'projel)
-
 (defcustom projel-allow-magit-repository-directories-sync t
   "Whether to add projects parents directory to `magit-repository-directories'."
   :type '(repeat directory)
@@ -71,30 +66,6 @@ If nil, disable auto preview."
                 (number :tag "Seconds"))
   :group 'projel)
 
-;; currenlty not implemented
-(defcustom projel-explore-dirs-settings '(("~/"
-                                           (:max-depth . 3)
-                                           (:non-visit-dirs . ("node_modules"
-                                                               ".cache"
-                                                               ".cask"))
-                                           (:exclude-regexps . ("^\\."))
-                                           (:include-regexps . ("^\\.emacs\\.d"))))
-  "Settings per parent directories. Currenlty it is not implemented."
-  :type
-  '(alist
-    :key-type (directory :tag "Directory")
-    :value-type
-    (alist :options
-           ((:max-depth (integer :tag "Maximum depth" 1))
-            (:non-visit-dirs (repeat :tag
-                                     "Excluded directory"
-                                     directory)
-                             '("node_modules"
-                               ".cache"
-                               ".cask"))
-            (:exclude-regexps . ("^\\."))
-            (:include-regexps . ("^\\.emacs\\.d")))))
-  :group 'projel)
 
 (defface projel-project-type-annotation '((t :inherit font-lock-keyword-face))
   "Face used by for project type annotations."
