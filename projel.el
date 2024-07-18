@@ -32,6 +32,7 @@
 
 ;;; Code:
 
+(require 'subr-x)
 (require 'project)
 (require 'transient)
 
@@ -68,26 +69,66 @@ If nil, disable auto preview."
 
 
 (defface projel-project-type-annotation '((t :inherit font-lock-keyword-face))
-  "Face used by for project type annotations."
+  "Face used by for project type annotations in minibuffer."
   :group 'projel)
 
 (defface projel-project-description-annotation '((t :inherit
                                                     completions-annotations))
-  "Face used by for project descriptions annotations."
+  "Face used by for project descriptions annotations in minibuffer."
   :group 'projel)
 
-(defcustom projel-annotation-project-type-max-width 10
-  "The maximum length of the project type to display in minibuffer.
+(defface projel-selected-project '((t :inherit underline))
+  "Face used for the selected project in minibuffer.
 
-If the string exceeds this limit, it will be truncated to fit."
-  :type 'integer
+It has effect only if this face is the value of
+`projel-selected-project-minibuffer-indicator'."
   :group 'projel)
 
-(defcustom projel-annotation-project-description-max-width 80
+(defcustom projel-selected-project-minibuffer-indicator 'projel-selected-project
+  "Indicator for the selected project in the minibuffer.
+
+A string used as an indicator for the currently selected project in
+the minibuffer. When set, this string will be appended to the name
+of the current project to visually distinguish it from other
+projects.
+
+Possible values include:
+
+- nil: No indicator will be shown.
+
+- A string: The specified string will be used as the indicator.
+
+This can help quickly identify the active project when switching
+between multiple projects."
+  :group 'projel
+  :type '(radio
+          (const :tag "None" nil)
+          (string :tag "Suffix")
+          (face :tag "Face")))
+
+(defcustom projel-annotation-project-type-max-width 'full
+  "Maximum width for displaying project type annotations.
+
+Defines the maximum width for displaying project types in the
+annotations.
+
+Possible values are:
+
+- `full': Automatically align to the longest project type.
+
+- An integer: Specify a fixed width for the project type."
+  :type '(radio
+          (const :tag "Auto (align to the longest project type)" full)
+          (integer :tag "Width"))
+  :group 'projel)
+
+(defcustom projel-annotation-project-description-max-width 120
   "The maximum length of the project description to display in minibuffer.
 
 If the string exceeds this limit, it will be truncated to fit."
-  :type 'integer
+  :type '(radio
+          (const :tag "Auto (align to the longest project type)" auto)
+          (integer :tag "Width"))
   :group 'projel)
 
 (defcustom projel-explore-project-depth 3
@@ -109,32 +150,60 @@ If it is a function, it will be called with one argument -
 the modification time in the style of `current-time' and should return a string.
 
 If it is a string, it should be the format-string for `format-time-string'."
-  :type '(radio (const :tag "Don't display time" nil)
-                (function-item projel-format-time-readable)
-                (string
-                 :tag "Time Format"
-                 :value "%b %d %Y")
-                (function :tag "Custom formatter"))
+  :type '(radio
+          (const :tag "Don't display time" nil)
+          (function-item projel-format-time-readable)
+          (function-item projel-format-time-readable-long)
+          (string
+           :tag "Time Format"
+           :value "%b %d %Y")
+          (function :tag "Custom formatter"))
   :group 'projel)
 
 
-(defcustom projel-projects-actions-alist '(("*Rescan all projects*" .
-                                            projel-rescan-all-projects)
-                                           ("*Find projects in directory*" .
-                                            projel-rescan-directory)
-                                           ("*Add project*"
-                                            . projel-add-project-directory)
-                                           ("*Remove project*"
-                                            . projel-remove-project))
-  "A text to show in minibuffer completions to rescan projects."
+(defcustom projel-metadata-file (locate-user-emacs-file
+                                 "var/projel-projects-metadata")
+  "File path for storing project metadata.
+
+If set to nil, metadata will not be saved to a file.
+
+The file should be readable and writable to ensure proper
+functionality.
+
+This variable is used by functions that read and write project
+metadata to persist project information across sessions."
+  :group 'projel
+  :type '(choice (const :tag "Don't save" nil)
+          file))
+
+
+(defcustom projel-projects-actions-alist '(("*Rescan all projects*" . projel-rescan-all-projects)
+                                           ("*Find projects in directory*" . projel-rescan-directory)
+                                           ("*Add project*" . projel-add-project-directory)
+                                           ("*Remove project*" . projel-remove-project)
+                                           ("*Edit description*" . projel-edit-project-description)
+                                           ("*Edit project type" . projel-edit-project-type))
+  "Alist of project action labels and their corresponding functions.
+
+An alist mapping action labels to their corresponding functions for
+project management.
+
+Each key is a string representing the label of the action, and each
+value is a function symbol that performs the action.
+
+
+To add a custom action, append a new pair to the list:
+
+ \\=(add-to-list \\='projel-projects-actions-alist
+               \\='(\"*Custom action*\" . my-custom-function))"
   :group 'projel
   :type '(alist
           :key-type (string :tag "Label")
           :value-type (choice (function-item projel-add-project-directory)
-                              (function-item projel-rescan-directory)
-                              (function-item projel-rescan-all-projects)
-                              (function-item projel-remove-project)
-                              (function :tag "Custom function"))) )
+                       (function-item projel-rescan-directory)
+                       (function-item projel-rescan-all-projects)
+                       (function-item projel-remove-project)
+                       (function :tag "Custom function"))))
 
 (defcustom projel-preview-buffer-name "*projel-preview*"
   "Buffer name to use for preview file."
@@ -156,214 +225,274 @@ To change this behavior, set the value to nil."
   :group 'projel
   :type 'boolean)
 
-(defvar projel-file-name-indicators
-  '((("dune-project")
-     . "Dune-Project")
-    (("Project.toml")
-     . "Project.Toml")
-    (("elm.json")
-     . "Elm.Json")
-    (("pubspec.yaml")
-     . "Pubspec.Yaml")
-    (("info.rkt")
-     . "Info.Rkt")
-    (("Cargo.toml")
-     . "Cargo.Toml")
-    (("stack.yaml")
-     . "Stack.Yaml")
-    (("DESCRIPTION")
-     . "Description")
-    (("Cask")
-     . "Cask")
-    (("shard.yml")
-     . "Shard.Yml")
-    (("Gemfile" "app" "lib" "db" "config" "spec")
-     . "Gemfile")
-    (("Gemfile" "app" "lib" "db" "config" "test")
-     . "Gemfile")
-    (("Gemfile" "lib" "test")
-     . "Gemfile")
-    (("Gemfile" "lib" "spec")
-     . "Gemfile")
-    ((".bloop")
-     . ".Bloop")
-    (("deps.edn")
-     . "Deps.Edn")
-    (("build.boot")
-     . "Build.Boot")
-    (("project.clj" ".midje.clj")
-     . "Leiningen")
-    (("project.clj" "package.json")
-     . "Leiningen")
-    (("project.clj" "package.json")
-     . "Leiningen")
-    (("project.clj")
-     . "Leiningen")
-    (("build.sc")
-     . "Build.Sc")
-    (("build.sbt")
-     . "Build.Sbt")
-    (("application.yml" "grails-app")
-     . "Application.Yml")
-    (("gradlew")
-     . "Gradlew")
-    (("build.gradle")
-     . "Build.Gradle")
-    (("pom.xml")
-     . "Pom.Xml")
-    (("pyproject.toml")
-     . "Pyproject.Toml")
-    (("poetry.lock")
-     . "Poetry.Lock")
-    (("Pipfile")
-     . "Pipfile")
-    (("tox.ini")
-     . "Tox.Ini")
-    (("setup.py")
-     . "Setup.Py")
-    (("requirements.txt")
-     . "Requirements.Txt")
-    (("manage.py")
-     . "Manage.Py")
-    (("angular.json" ".angular-cli.json")
-     . "Angular.Json")
-    (("package.json")
-     . "JavaScript")
-    (("tsconfig.json")
-     . "TypeScript")
-    (("gulpfile.js")
-     . "Gulpfile.Js")
-    (("Gruntfile.js")
-     . "Gruntfile.Js")
-    (("mix.exs")
-     . "Mix.Exs")
-    (("rebar.config")
-     . "Rebar.Config")
-    (("composer.json" "app" "src" "vendor")
-     . "Composer.Json")
-    (("Taskfile.yml")
-     . "Taskfile.Yml")
-    (("CMakeLists.txt")
-     . "Cmakelists.Txt")
-    (("GNUMakefile")
-     . "Gnumakefile")
-    (("Makefile")
-     . "Makefile")
-    (("debian/control")
-     . "Debian/Control")
-    (("WORKSPACE")
-     . "Workspace")
-    (("flake.nix")
-     . "Flake.Nix")
-    (("default.nix")
-     . "Default.Nix")
-    (("meson.build")
-     . "Meson.Build")
-    (("SConstruct")
-     . "Sconstruct")
-    (("src")
-     . "Src")
-    (("dune-project")
-     . "Dune-Project")
-    (("Project.toml")
-     . "Project.Toml")
-    (("elm.json")
-     . "Elm.Json")
-    (("pubspec.yaml")
-     . "Pubspec.Yaml")
-    (("info.rkt")
-     . "Info.Rkt")
-    (("Cargo.toml")
-     . "Cargo.Toml")
-    (("stack.yaml")
-     . "Stack.Yaml")
-    (("DESCRIPTION")
-     . "Description")
-    (("Cask")
-     . "Cask")
-    (("shard.yml")
-     . "Shard.Yml")
-    (("Gemfile" "app" "lib" "db" "config" "spec")
-     . "Gemfile")
-    (("Gemfile" "app" "lib" "db" "config" "test")
-     . "Gemfile")
-    (("Gemfile" "lib" "test")
-     . "Gemfile")
-    (("Gemfile" "lib" "spec")
-     . "Gemfile")
-    ((".bloop")
-     . ".Bloop")
-    (("deps.edn")
-     . "ClojureScript")
-    (("build.boot")
-     . "Build.Boot")
-    (("project.clj" ".midje.clj")
-     . "Clojure")
-    (("project.clj")
-     . "Clojure")
-    (("build.sc")
-     . "Build.Sc")
-    (("build.sbt")
-     . "Build.Sbt")
-    (("application.yml" "grails-app")
-     . "Application.Yml")
-    (("gradlew")
-     . "Gradlew")
-    (("build.gradle")
-     . "Build.Gradle")
-    (("pom.xml")
-     . "Pom.Xml")
-    (("pyproject.toml")
-     . "Pyproject.Toml")
-    (("poetry.lock")
-     . "Poetry.Lock")
-    (("Pipfile")
-     . "Pipfile")
-    (("tox.ini")
-     . "Tox.Ini")
-    (("setup.py")
-     . "Setup.Py")
-    (("requirements.txt")
-     . "Requirements.Txt")
-    (("manage.py")
-     . "Manage.Py")
-    (("angular.json" ".angular-cli.json")
-     . "Angular.Json")
-    (("package.json")
-     . "Javascript")
-    (("gulpfile.js")
-     . "Gulpfile.Js")
-    (("Gruntfile.js")
-     . "Gruntfile.Js")
-    (("mix.exs")
-     . "Mix.Exs")
-    (("rebar.config")
-     . "Rebar.Config")
-    (("composer.json" "app" "src" "vendor")
-     . "Composer.Json")
-    (("Taskfile.yml")
-     . "Taskfile.Yml")
-    (("CMakeLists.txt")
-     . "Cmakelists.Txt")
-    (("GNUMakefile")
-     . "Gnumakefile")
-    (("Makefile")
-     . "Makefile")
-    (("debian/control")
-     . "Debian/Control")
-    (("WORKSPACE")
-     . "Workspace")
-    (("flake.nix")
-     . "Flake.Nix")
-    (("default.nix")
-     . "Default.Nix")
-    (("meson.build")
-     . "Meson.Build")
-    (("SConstruct")
-     . "Sconstruct")
-    (("src")
-     . "Src"))
-  "Alist of project files and corresponding type annotations.")
+(defcustom projel-projects-annotations-columns '((:type auto "%s" face
+                                                  projel-project-type-annotation)
+                                                 (:modified-time auto
+                                                  projel-format-time-readable)
+                                                 (:description auto "%s" face
+                                                  projel-project-description-annotation))
+  "A list of columns to display annotations for projects.
+
+Each element in the list should be a plist specifying the column
+type, width, format, and optionally text properties.
+
+The structure of each column specification is as follows:
+
+- type - The type of the column. This can be one of the following:
+  - :type - Represents the project type.
+  - :modified-time - Represents the last modified time of the project.
+  - :description - Represents the project description.
+
+- width - The width of the column. This can be:
+  - auto - Automatically adjust the width based on the content.
+  - An integer - A fixed width for the column.
+
+- format - The format of the column content. This can be:
+  - A string - A format string (e.g., \"%s\").
+  - A function - A function to format the content. The function should accept a
+    single argument, which is the value to be formatted, and return a formatted
+    string.
+
+- text properties."
+  :group 'projel
+  :type
+  '(repeat
+    (choice
+     :tag "Column"
+     :value
+     (:description auto "%s" face projel-project-description-annotation)
+     (list :tag "Project Type"
+      (const :type)
+      (choice
+       :tag "Column Width"
+       :value auto
+       (const :tag "Auto" auto)
+       (integer :tag "Fixed Width" 11))
+      (radio :value "%s"
+       (string :tag "Format" "%s")
+       (function :tag "Formatter"))
+      (set :inline t
+       (list
+        :format "%v"
+        :inline t
+        (const
+         :format "" face)
+        (face :tag "Face" projel-project-type-annotation)))
+      (plist
+       :tag "Text properties"
+       :inline t))
+     (list :tag "Modified Time"
+      (const :modified-time)
+      (choice
+       :tag "Column Width"
+       :value auto
+       (const :tag "Auto" auto)
+       (integer :tag "Fixed Width" 11))
+      (radio :value projel-format-time-readable
+       (string :tag "Format" "%b %d %Y")
+       (function-item projel-format-time-readable)
+       (function-item projel-format-time-readable-long)
+       (function :tag "Formatter"))
+      (set :inline t
+       (list
+        :format "%v"
+        :inline t
+        (const
+         :format "" face)
+        (face :tag "Face" projel-project-description-annotation)))
+      (plist
+       :tag "Text properties"
+       :inline t))
+     (list :tag "Description"
+      (const :description)
+      (choice
+       :tag "Column Width"
+       :value auto
+       (const :tag "Auto" auto)
+       (integer :tag "Fixed Width" 11))
+      (radio :value "%s"
+       (string :tag "Format" "%s")
+       (function :tag "Formatter"))
+      (set :inline t
+       (list
+        :format "%v"
+        :inline t
+        (const
+         :format "" face)
+        (face :tag "Face"
+         projel-project-description-annotation)))
+      (plist
+       :tag "Text properties"
+       :inline t)))))
+
+
+
+(defcustom projel-file-name-indicators '((("dune-project") . "Dune-Project")
+                                         (("elm.json") . "Elm")
+                                         (("Cargo.toml") . "Rust")
+                                         (("Gemfile") . "Ruby")
+                                         ((".bloop") . "Scala")
+                                         (("project.clj" ".midje.clj") . "Leiningen")
+                                         (("project.clj" "package.json") . "Leiningen")
+                                         (("project.clj") . "Leiningen")
+                                         (("gradlew") . "Gradlew")
+                                         (("Pipfile") . "Pipfile")
+                                         (("early-init.el") . "Emacs Config")
+                                         (("init.el") . "Emacs Config")
+                                         (("Cask") . "Elisp")
+                                         (("tsconfig.json") . "TypeScript")
+                                         (("package.json") . "JavaScript")
+                                         (("Makefile") . "Makefile")
+                                         (("deps.edn") . "Clojure")
+                                         (("project.clj" ".midje.clj") . "Clojure")
+                                         (("project.clj") . "Clojure")
+                                         (("poetry.lock") . "Python Poetry")
+                                         (("pyproject.toml") . "Python Pyproject")
+                                         (("Pipfile") . "Python Pipenv")
+                                         (("setup.py") . "Python")
+                                         (("requirements.txt") . "Python Pip")
+                                         (("pubspec.yaml") . "Dart")
+                                         (("info.rkt") . "Racket")
+                                         (("stack.yaml") . "Haskell")
+                                         (("shard.yml") . "Crystal")
+                                         (("deps.edn") . "Clojure")
+                                         (("build.boot") . "Clojure")
+                                         (("build.sc") . "Scala")
+                                         (("build.sbt") . "Scala")
+                                         (("application.yml" "grails-app") . "Groovy")
+                                         (("build.gradle") . "Groovy")
+                                         (("pom.xml") . "Java")
+                                         (("pyproject.toml") . "Python")
+                                         (("poetry.lock") . "Python")
+                                         (("tox.ini") . "Python")
+                                         (("manage.py") . "Python Django")
+                                         (("angular.json" ".angular-cli.json") . "JavaScript")
+                                         (("gulpfile.js") . "JavaScript")
+                                         (("Gruntfile.js") . "JavaScript")
+                                         (("mix.exs") . "Elixir")
+                                         (("rebar.config") . "Erlang")
+                                         (("composer.json" "app" "src" "vendor") . "PHP")
+                                         (("Taskfile.yml") . "Go")
+                                         (("CMakeLists.txt") . "C/C++")
+                                         (("flake.nix") . "Nix")
+                                         (("default.nix") . "Nix")
+                                         (("meson.build") . "C")
+                                         (("Project.toml") . "Julia")
+                                         (("elm.json") . "Elm")
+                                         (("GNUMakefile") . "Makefile")
+                                         (("debian/control") . "Debian Package")
+                                         (("WORKSPACE") . "Bazel")
+                                         (("SConstruct") . "SCons")
+                                         (("build.xml") . "Ant")
+                                         (("build.kts") . "Kotlin")
+                                         (("build.gradle.kts") . "Kotlin")
+                                         (("Gemfile.lock") . "Ruby")
+                                         (("Rakefile") . "Ruby")
+                                         (("Berksfile") . "Chef")
+                                         (("Cheffile") . "Chef")
+                                         (("metadata.rb") . "Chef")
+                                         (("Vagrantfile") . "Vagrant")
+                                         (("Dockerfile") . "Docker")
+                                         (("docker-compose.yml") . "Docker Compose")
+                                         (("Jenkinsfile") . "Jenkins")
+                                         (("fastlane/Fastfile") . "Fastlane")
+                                         (("Podfile") . "CocoaPods")
+                                         (("Cartfile") . "Carthage")
+                                         (("Brewfile") . "Homebrew")
+                                         (("Conanfile.txt") . "Conan")
+                                         (("conanfile.py") . "Conan")
+                                         (("vcpkg.json") . "Vcpkg")
+                                         (("vcpkg-configuration.json") . "Vcpkg")
+                                         (("vcpkg-configuration.cmake") . "Vcpkg")
+                                         (("vcpkg.json") . "Vcpkg")
+                                         (("vcpkg-configuration.json") . "Vcpkg")
+                                         (("vcpkg-configuration.cmake") . "Vcpkg"))
+  "Alist mapping file names to project types.
+
+A list of file name patterns and their corresponding project types.
+
+Each element is a cons cell where the car is a list of file names
+that indicate a specific project type, and the cdr is a string
+representing the project type.
+
+For example, if a directory contains a file named \"Cargo.toml\",
+the project type will be identified as \"Rust\".
+
+This list is used to determine the type of a project based on the
+presence of specific files in the project's root directory."
+  :group 'projel
+  :type '(alist
+          :key-type
+          (repeat string)
+          :value-type string))
+
+(defcustom projel-file-extensions-indicators '(("gradle" . "Java (Gradle)")
+                                               ("hs" . "Haskel")
+                                               ("cabal" . "Haskel (Cabal)")
+                                               ("cpp" . "C")
+                                               ("h" . "C")
+                                               ("c" . "C"))
+  "Alist mapping file extensions to their corresponding project indicators.
+
+A list of file extensions and their corresponding project type
+indicators. Each element is a cons cell where the car is a file
+extension (string) and the cdr is a string describing the project
+type.
+
+This list is used to determine the type of project based on the
+file extensions present in the project directory. For example,
+a file with the extension \"gradle\" will be identified as a \"Java
+\\=(Gradle)\" project."
+  :group 'projel
+  :type '(alist
+          :key-type string
+          :value-type string))
+
+(defcustom projel-project-type-finders '(projel-get-project-by-files-extensions
+                                         projel-find-project-type-by-files)
+  "List of functions to determine the project type by examining project files.
+
+A list of functions used to determine the type of a project.
+
+Each function in the list should accept a single argument, the
+project directory, and return a symbol representing the project
+type if it can determine it, or nil otherwise.
+
+The functions are executed in order until one returns a non-nil
+value, which is then used as the project type."
+  :group 'projel
+  :type 'hook)
+
+(defcustom projel-minibuffer-group-fn 'projel-group-by-parent-directory
+  "Function to group project files in the minibuffer.
+
+Function to group project candidates in the minibuffer.
+
+The value can be one of the following:
+
+- `projel-group-by-parent-directory': Group projects by their parent directory.
+
+- `projel-group-by-project-type': Group projects by their type.
+
+- nil: Do not group projects.
+
+- A custom function: Provide a custom grouping function.
+
+The custom function should accept a list of project candidates and return a list
+of groups. Each group should be a cons cell where the car is the group name and
+the cdr is a list of project candidates belonging to that group."
+  :group 'projel
+  :type '(radio
+          (function-item projel-group-by-parent-directory)
+          (function-item projel-group-by-project-type)
+          (const :tag "Don't group" nil)
+          (function "Custom function")))
+
+(defvar projel-projects-cache (make-hash-table :test #'equal))
+(defvar projel-projects-metadata-cache (make-hash-table :test #'equal))
+
+(defvar projel--reading-project nil)
+(defvar projel--metadata-loaded nil)
 
 (defmacro projel--pipe (&rest functions)
   "Return left-to-right composition from FUNCTIONS."
@@ -382,13 +511,6 @@ To change this behavior, set the value to nil."
            (if (symbolp init-fn)
                `(apply #',init-fn args)
              `(apply ,init-fn args)))))))
-
-(defmacro projel--always (value)
-  "Return a function that always return VALUE.
-This function accepts any number of arguments but ignores them."
-  (declare (pure t)
-           (side-effect-free error-free))
-  `(lambda (&rest _) ,value))
 
 (defmacro projel--compose (&rest functions)
   "Return right-to-left composition from FUNCTIONS."
@@ -438,19 +560,6 @@ If first element of FUNCTIONS is vector, it will be used instead:
                 (append (car functions) nil)
               functions)))))))
 
-(defmacro projel--or (&rest functions)
-  "Return an unary function which invoke FUNCTIONS until first non-nil result."
-  (declare (debug t)
-           (pure t)
-           (side-effect-free t))
-  `(lambda (it)
-     (or
-      ,@(mapcar (lambda (v)
-                  (if (symbolp v)
-                      `(,v it)
-                    `(funcall ,v it)))
-                functions))))
-
 (defmacro projel--and (&rest functions)
   "Return an unary function which invoke FUNCTIONS until first nil result."
   (declare (debug t)
@@ -464,29 +573,27 @@ If first element of FUNCTIONS is vector, it will be used instead:
                     `(funcall ,v it)))
                 functions))))
 
-(defmacro projel--partial (fn &rest args)
-  "Return a partial application of FN to left-hand ARGS.
+(defmacro projel-cond (&rest pairs)
+  "Return a function that expands a list of PAIRS to cond clauses.
+Every pair should be either:
+- a vector of [predicate transformer],
+- a list of (predicate transformer).
 
-ARGS is a list of the last N arguments to pass to FN. The result is a new
-function which does the same as FN, except that the last N arguments are fixed
-at the values with which this function was called."
-  (declare (side-effect-free t))
-  `(lambda (&rest pre-args)
-     ,(car (list (if (symbolp fn)
-                     `(apply #',fn (append (list ,@args) pre-args))
-                   `(apply ,fn (append (list ,@args) pre-args)))))))
+The predicate can also be t.
 
-(defmacro projel--rpartial (fn &rest args)
-  "Return a partial application of FN to right-hand ARGS.
-
-ARGS is a list of the last N arguments to pass to FN. The result is a new
-function which does the same as FN, except that the last N arguments are fixed
-at the values with which this function was called."
-  (declare (side-effect-free t))
-  `(lambda (&rest pre-args)
-     ,(car (list (if (symbolp fn)
-                     `(apply #',fn (append pre-args (list ,@args)))
-                   `(apply ,fn (append pre-args (list ,@args))))))))
+All of the arguments to function are applied to each of the predicates in turn
+until one returns a \"truthy\" value, at which point fn returns the result of
+applying its arguments to the corresponding transformer."
+  (declare (pure t)
+           (indent defun)
+           (side-effect-free error-free))
+  (let ((args (make-symbol "args")))
+    `(lambda (&rest ,args)
+       (cond ,@(mapcar (lambda (v)
+                         (list (if (eq (aref v 0) t) t
+                                `(apply ,@(projel--expand (aref v 0)) ,args))
+                          `(apply ,@(projel--expand (aref v 1)) ,args)))
+                pairs)))))
 
 (defun projel-minibuffer-get-metadata ()
   "Return current minibuffer completion metadata."
@@ -556,7 +663,20 @@ completion UI highly compatible with it, like Icomplete."
 
 (defvar projel-minibuffer-targets-finders
   '(projel-minibuffer-ivy-selected-cand
+    projel--vertico-selected
     projel-minibuffer-default-top-minibuffer-completion))
+
+(declare-function vertico--candidate "ext:vertico")
+(declare-function vertico--update "ext:vertico")
+
+(defun projel--vertico-selected ()
+  "Target the currently selected item in Vertico.
+Return the category metadatum as the type of the target."
+  (when (bound-and-true-p vertico--input)
+    (vertico--update)
+    (cons (completion-metadata-get (projel-minibuffer-get-metadata) 'category)
+          (vertico--candidate))))
+
 
 (defun projel-minibuffer-current-candidate ()
   "Return cons with category and current completion candidate in minibuffer."
@@ -566,8 +686,8 @@ completion UI highly compatible with it, like Icomplete."
      (lambda (fun)
        (when-let ((result (funcall fun)))
          (when (and (cdr-safe result)
-                    (stringp (cdr-safe result))
-                    (not (string-empty-p (cdr-safe result))))
+                    (stringp (cdr result))
+                    (not (string-empty-p (cdr result))))
            (setq target result)))
        (and target (minibufferp))))
     target))
@@ -873,7 +993,8 @@ function from writing the updated project list to disk. It defaults to nil."
                    (format "Added %d projects. " (length results)))
                  (when dead-projects
                    (format "Removed %d projects. " dead-projects))))
-          ""))))))
+          ""))))
+    (clrhash projel-projects-cache)))
 
 (defun projel--write-project-list ()
   "Save `project--list' in `project-list-file'."
@@ -898,6 +1019,9 @@ function from writing the updated project list to disk. It defaults to nil."
 If `projel-auto-rescan-on-init' is enabled and `project--list' is not initted,
 rescan parent directories of projects.
 Also check and remove unexisting projects."
+  (unless projel--metadata-loaded
+    (setq projel--metadata-loaded t)
+    (projel--read-projects-metadata))
   (if (or
        (and projel-auto-rescan-on-init
             (eq project--list 'unset)))
@@ -944,12 +1068,25 @@ to `default-directory', and the result will also be relative."
       parent))))
 
 (defun projel-get-projects-parent-dirs ()
-  "Return list of git parents directories."
+  "Return list of git parpents directories."
   (projel--ensure-read-project-list)
-  (delete-dups (mapcar (projel--compose
-                         projel-file-name-parent-directory
-                         car)
-                       project--list)))
+  (let ((parents))
+    (pcase-dolist (`(,proj . ,_v) project--list)
+      (when-let* ((project (ignore-errors (project-current
+                                           nil proj)))
+                  (root (if (fboundp 'project-root)
+                            (project-root project)
+                          (with-no-warnings
+                            (car (project-roots project))))))
+        (when (equal proj root)
+          (when-let ((parent (projel-file-name-parent-directory root)))
+            (while
+                (let ((default-directory parent))
+                  (projel-current-project-root))
+              (setq parent (projel-file-name-parent-directory parent)))
+            (unless (member parent parents)
+              (push parent parents))))))
+    parents))
 
 (defvar projel-minibuffer-map
   (let ((map (make-sparse-keymap)))
@@ -969,18 +1106,48 @@ If active minibuffer window exists it will throw list with
 If no active minibuffer window exists, it will remove directory PROJECT-DIR
 of a missing project from the project list. If PROJECT-DIR is nil,
 it will read project in minibuffer."
-  (interactive)
-  (unless project-dir
-    (setq project-dir (if (active-minibuffer-window)
-                          (pcase-let ((`(,_category . ,current)
-                                       (projel-minibuffer-current-candidate)))
-                            current)
-                        (projel-completing-read-project))))
-  (if (active-minibuffer-window)
-      (throw 'action (list 'project--remove-from-project-list project-dir
+  (interactive (list (projel--read-project-for-action)))
+  (if projel--reading-project
+      (throw 'action (list 'project--remove-from-project-list
+                           (or project-dir
+                               (projel--read-project-for-action))
                            "Project `%s' removed from known projects"))
     (project--remove-from-project-list
-     project-dir "Project `%s' removed from known projects")))
+     (or project-dir
+         (projel--read-project-for-action))
+     "Project `%s' removed from known projects")))
+
+
+;;;###autoload
+(defun projel-edit-project-description (&optional project-dir)
+  "Edit the description of a project specified by PROJECT-DIR.
+
+Optional argument PROJECT-DIR is the directory of the project to edit."
+  (interactive (list (projel--read-project-for-action)))
+  (if projel--reading-project
+      (throw 'action (list (apply-partially #'projel--edit-project-field
+                                            :description)
+                           project-dir
+                           "Project `%s' edited"))
+    (projel--edit-project-field :description
+                                (or project-dir
+                                    (projel--read-project-for-action))
+                                "Project `%s' edited")))
+
+;;;###autoload
+(defun projel-edit-project-type (&optional project-dir)
+  "Edit the project type for a given project directory.
+
+Optional argument PROJECT-DIR is the directory of the project to edit."
+  (interactive (list (projel--read-project-for-action)))
+  (if projel--reading-project
+      (throw 'action (list (apply-partially #'projel--edit-project-field
+                                            :type)
+                           project-dir
+                           "Project `%s' edited"))
+    (projel--edit-project-field :type (or project-dir
+                                          (projel--read-project-for-action))
+                                "Project `%s' edited")))
 
 ;;;###autoload
 (defun projel-add-project-directory ()
@@ -992,24 +1159,17 @@ its arguments.
 If no active minibuffer window exists, it will prompt directory, and add
 it to list of projects."
   (interactive)
-  (let ((fn (lambda ()
-              (if-let ((pr (project--find-in-directory (read-directory-name
-                                                        "Select directory: "
-                                                        (if-let
-                                                            ((proj
-                                                              (projel-current-project-root)))
-                                                            (projel-file-name-parent-directory
-                                                             proj)
-                                                          default-directory)
-                                                        nil t))))
-                  (project-remember-project pr)
-                (message "could add project")))))
-    (if (active-minibuffer-window)
-        (throw 'action (list fn))
-      (funcall fn))))
+  (if projel--reading-project
+      (throw 'action
+             (list (projel--compose
+                     #'projel--add-project
+                     (apply-partially #'projel--read-new-project-directory
+                                      "Project directory: "))))
+    (projel--add-project (projel--read-new-project-directory
+                          "Project directory: "))))
 
 ;;;###autoload
-(defun projel-rescan-directory (&optional dir depth)
+(defun projel-rescan-directory (dir depth)
   "Dispatch or perform action to add projects in DIR at max DEPTH.
 If DIR or DEPTH is nil it will read DIR and DEPTH in minibuffer.
 
@@ -1018,9 +1178,7 @@ If active minibuffer window exists throw the action
 with DIR and DEPTH."
   (interactive (list (read-directory-name "Directory")
                      (read-number "Max depth: ")))
-  (unless dir (setq dir (read-directory-name "Directory")))
-  (unless depth (setq depth (read-number "Max depth: ")))
-  (if (active-minibuffer-window)
+  (if projel--reading-project
       (throw 'action (list #'projel-find-projects-in-dir dir depth))
     (projel-find-projects-in-dir dir depth)))
 
@@ -1029,7 +1187,7 @@ with DIR and DEPTH."
 (defun projel-rescan-all-projects ()
   "Rescan parent directories of current projects."
   (interactive)
-  (if (active-minibuffer-window)
+  (if projel--reading-project
       (throw 'action (list 'projel-rescan-all))
     (projel-rescan-all)))
 
@@ -1038,29 +1196,256 @@ with DIR and DEPTH."
     (set-keymap-parent map projel-minibuffer-map)
     (define-key map (kbd "C-c C-u") #'projel-rescan-all-projects)
     (define-key map (kbd "C-c M-D") #'projel-remove-project)
+    (define-key map (kbd "C-c M-d") #'projel-remove-project)
+    (define-key map (kbd "C-c C-e d") #'projel-edit-project-description)
+    (define-key map (kbd "C-c C-e t") #'projel-edit-project-type)
     (define-key map (kbd "C-c !") #'projel-rescan-directory)
     (define-key map (kbd "C-c C-M-o") #'projel-add-project-directory)
     (define-key map (kbd "C-h ?") #'projel-projects-minibuffer-help)
     map)
   "Keymap to use in minibuffer when reading projects.")
 
-;;;###autoload
+
+(defun projel--get-command-key (sym)
+  "Return the key description for the command symbol SYM.
+
+Argument SYM is the symbol representing the command to find the key binding for."
+  (let ((k (where-is-internal sym
+                              nil
+                              t)))
+    (when (and k (eq sym (key-binding
+                          k)))
+      (let ((i (cl-search [?\C-x
+                           ?6]
+                          k)))
+        (when i
+          (let ((dup
+                 (vconcat (substring
+                           k 0
+                           i)
+                          [f2]
+                          (substring
+                           k
+                           (+
+                            i
+                            2))))
+                (map
+                 (current-global-map)))
+            (when (equal (lookup-key
+                          map k)
+                         (lookup-key
+                          map dup))
+              (setq k dup)))))
+      (key-description
+       k))))
+
+(defun projel--format-keymap (map)
+  "Format a keymap into a string with aligned keys and command names.
+
+Argument MAP is a keymap or a list of keymaps to be formatted."
+  (let ((alist)
+        (col-len 0))
+    (dolist (sym (delete-dups
+                  (seq-filter #'commandp
+                              (flatten-list
+                               map))))
+      (when-let ((key (projel--get-command-key sym)))
+        (setq col-len (max (length key) col-len))
+        (push (list key sym) alist)))
+    (mapconcat
+     (pcase-lambda (`(,k ,v))
+       (concat k (make-string (- col-len (length k)) ?\s) " " (format
+                                                               "%s" v)))
+     alist
+     "\n")))
+
 (defun projel-projects-minibuffer-help ()
   "Show keybindings for `projel-minibuffer-project-map'."
   (interactive)
   (let ((overlay))
     (unwind-protect
-        (progn (setq overlay (make-overlay (point)
-                                           (1+ (point))))
-               (overlay-put overlay 'after-string
-                            (substitute-command-keys
-                                     "\\<projel-minibuffer-project-map>\\{projel-minibuffer-project-map}"))
+        (progn (setq overlay (make-overlay (window-start)
+                                           (1+ (window-start))))
+               (overlay-put overlay 'before-string
+                            (concat "\n"
+                                    (projel--format-keymap
+                                     projel-minibuffer-project-map)
+                                    "\n"))
                (read-key-sequence ""))
       (setq unread-command-events
             (append (this-single-command-raw-keys)
                     unread-command-events))
       (when (overlayp overlay)
         (delete-overlay overlay)))))
+
+
+(defun projel--edit-project-field (field proj &optional report-message)
+  "Edit the specified FIELD of the project PROJ and optionally report a message.
+
+Argument FIELD is the project field to be edited, which can be a keyword or a
+string.
+
+Argument PROJ is the project identifier, typically a string.
+
+Optional argument REPORT-MESSAGE is a message to be displayed after editing the
+field."
+  (let* ((pl (gethash proj projel-projects-metadata-cache))
+         (new-descr (read-string (format "Edit %s in `%s': " (if
+                                                                 (keywordp field)
+                                                                 (substring-no-properties
+                                                                  (symbol-name
+                                                                   field)
+                                                                  1)
+                                                               field)
+                                         proj)
+                                 (plist-get
+                                  (gethash proj
+                                           projel-projects-metadata-cache)
+                                  field)
+                                 (plist-get
+                                  (gethash proj
+                                           projel-projects-cache)
+                                  field))))
+    (setq pl (plist-put pl field new-descr))
+    (puthash proj pl projel-projects-metadata-cache)
+    (projel--write-metadata)
+    (when report-message
+      (apply #'message (if (string-match-p "%s" report-message)
+                           (list report-message proj)
+                         (list report-message))))))
+
+(defun projel--read-project-for-action ()
+  "Prompt the user to select a project from a list, with completion."
+  (if projel--reading-project
+      (pcase-let
+          ((`(,_category . ,current)
+            (projel-minibuffer-current-candidate)))
+        (if (and current
+                 (file-exists-p current))
+            current
+          (user-error "A project %s doesn't exists" current)))
+    (projel-get-projects)
+    (completing-read "Select project: "
+                     (projel--projects-completion-table
+                      project--list)
+                     nil
+                     t)))
+
+(defun projel--add-project (dir)
+  "Add a project from DIR to the project list if it exists.
+
+Argument DIR is the directory to search for a project."
+  (if-let ((pr (project--find-in-directory dir)))
+      (project-remember-project pr)
+    (message "Project is not found in `%s'" (abbreviate-file-name dir))))
+
+(defun projel--get-guess-new-project-dirs ()
+  "Return a list of new project directories guessed from known project roots."
+  (let* ((non-essential t)
+         (projects-dirs (project-known-project-roots))
+         (parents)
+         (dirs))
+    (dolist (proj-dir projects-dirs)
+      (when-let ((parent (file-name-parent-directory proj-dir)))
+        (unless (member parent parents)
+          (push parent parents))))
+    (dolist (parent parents)
+      (dolist (dir (directory-files
+                    parent t
+                    directory-files-no-dot-files-regexp
+                    t))
+        (when (file-directory-p dir)
+          (setq dir (file-name-as-directory
+                     dir))
+          (when
+              (let ((default-directory dir))
+                (projel-current-project-root))
+            (let ((abbreviated (abbreviate-file-name dir)))
+              (unless (or
+                       (member abbreviated dirs)
+                       (member abbreviated projects-dirs)
+                       (not (file-accessible-directory-p abbreviated))
+                       (not (project--find-in-directory abbreviated)))
+                (push abbreviated dirs)))))))
+    dirs))
+
+(defvar projel-minibuffer-directory-map
+  (let ((map (make-sparse-keymap)))
+    (set-keymap-parent map projel-minibuffer-map)
+    (define-key map (kbd "C->") #'projel-throw-next-source)
+    (define-key map (kbd "C-<") #'projel-throw-prev-source)
+    map)
+  "Keymap to use in minibuffer when reading new projects.")
+
+(defun projel-throw-next-source ()
+  "Throw the symbol `next-source' using the tag `action'."
+  (interactive)
+  (throw 'action 'next-source))
+
+(defun projel-throw-prev-source ()
+  "Throw the `prev-source' action."
+  (interactive)
+  (throw 'action 'prev-source))
+
+(defun projel--read-new-project-directory (prompt &optional dir default-dirname
+                                                  initial)
+  "PROMPT for a new project directory, with optional INITIAL directory and name.
+
+Argument PROMPT is the string to prompt the user with.
+
+Optional argument DIR is the directory to start in.
+
+Optional argument DEFAULT-DIRNAME is the default directory name.
+
+Optional argument INITIAL is the initial input."
+  (unless dir
+    (setq dir (if-let ((proj
+                        (projel-current-project-root)))
+                  (projel-file-name-parent-directory proj)
+                default-directory)))
+  (let*
+      ((guessed-dirs)
+       (sources
+        (list
+         (apply-partially #'read-directory-name prompt dir
+                          default-dirname t initial)
+         (lambda ()
+           (completing-read prompt
+                            (or guessed-dirs
+                                (setq guessed-dirs
+                                      (projel--get-guess-new-project-dirs))))))))
+    (let ((action)
+          (done)
+          (pr-dir)
+          (idx 0))
+      (while
+          (setq action
+                (unless done (catch 'action
+                               (minibuffer-with-setup-hook
+                                   (lambda ()
+                                     (use-local-map
+                                      (make-composed-keymap projel-minibuffer-directory-map
+                                                            (current-local-map))))
+                                 (funcall (nth idx sources))))))
+        (pcase action
+          ('next-source (setq idx (if (nth (1+ idx) sources)
+                                      (1+ idx)
+                                    0)))
+          ('prev-source (setq idx (if (zerop idx)
+                                      (1- (length sources))
+                                    (1- idx))))
+          (_ (setq pr-dir action)
+             (setq done (not (string-empty-p pr-dir))))))
+      pr-dir)))
+
+
+(defun projel-add-current-project-dir-to-projects-maybe ()
+  "Add the current project directory to the project list if not already present."
+  (when-let ((pr (project--find-in-directory default-directory)))
+    (project--ensure-read-project-list)
+    (unless (member (project-root pr) project--list)
+      (project-remember-project pr)
+      (message "Added new project `%s'" pr))))
 
 (defun projel--completing-read-node-modules (prompt &rest _)
   "Read closest to current directory files in node_modules with PROMPT.
@@ -1086,12 +1471,21 @@ During minibuffer completion the following next commands are available:
 
 (defun projel-find-readme (dir)
   "Return list of readme files in DIR."
-  (let* ((tramp-archive-enabled nil)
-         (score-alist '(("org" . 3)
+  (let* ((non-essential t)
+         (tramp-archive-enabled nil)
+         (score-alist '(("org" . 1)
                         ("mdx" . 2)
-                        ("md" . 1)))
-         (readme-files (or (directory-files dir t "README\\.[a-z]+" t)
-                           (directory-files dir t "readme\\.[a-z]+" t))))
+                        ("md" . 3)))
+         (re (concat "\\`readme\\(\\."
+                     (regexp-opt (mapcar #'car score-alist))
+                     "\\)?\\'"))
+         (files (directory-files dir nil
+                                 directory-files-no-dot-files-regexp
+                                 t))
+         (case-fold-search t)
+         (readme-files
+          (seq-filter (apply-partially #'string-match-p re)
+                      files)))
     (seq-sort-by (lambda (it)
                    (or (cdr (assoc-string (file-name-extension (downcase it))
                                           score-alist))
@@ -1104,11 +1498,23 @@ During minibuffer completion the following next commands are available:
   (with-temp-buffer
     (insert str)
     (while (re-search-backward
-            "\\(?1:!\\)?\\(?2:\\[\\)\\(?3:[^]^][^]]*\\|\\)\\(?4:\\]\\)[ ]?\\(?5:\\[\\)\\(?6:[^]]*?\\)\\(?7:\\]\\)"
+            "\\[\\([^]]+\\)\\]([^)]+)"
             nil t 1)
-      (let ((label (match-string-no-properties 3)))
-        (if label
-            (replace-match label nil nil nil 0))))
+      (let ((label (match-string-no-properties 1)))
+        (when label
+          (replace-match label nil nil nil 0))))
+    (goto-char (point-max))
+    (while (re-search-backward "\\[\\[[^]]+]\\[\\([^]]+\\)]]" nil t
+                               1)
+      (let ((label (match-string-no-properties 1)))
+        (when label
+          (replace-match label nil nil nil 0))))
+    ;; (while (re-search-backward
+    ;;         "\\(?1:!\\)?\\(?2:\\[\\)\\(?3:[^]^][^]]*\\|\\)\\(?4:\\]\\)[ ]?\\(?5:\\[\\)\\(?6:[^]]*?\\)\\(?7:\\]\\)"
+    ;;         nil t 1)
+    ;;   (let ((label (match-string-no-properties 3)))
+    ;;     (if label
+    ;;         (replace-match label nil nil nil 0))))
     (buffer-string)))
 
 (defun projel-md-description ()
@@ -1154,6 +1560,7 @@ During minibuffer completion the following next commands are available:
                                  "[\n\r\f]" t)
                    "\s"))))
 
+
 (defun projel-readme-annotation (files)
   "Extract annotation from FILES."
   (let ((result))
@@ -1167,60 +1574,60 @@ During minibuffer completion the following next commands are available:
                 (projel-md-description)))))
     result))
 
-(defvar projel-file-extensions-indicators
-  '(("gradle" . "Java (Gradle)")
-    ("hs" . "Haskel")
-    ("cabal" . "Haskel (Cabal)")
-    ("cpp" . "C")
-    ("h" . "C")
-    ("c" . "C")
-    ("el" . "Emacs Lisp")))
+(defun projel--serialize (data filename)
+  "Serialize DATA to FILENAME.
+
+The saved data can be restored with `projel--unserialize'."
+  (when (file-writable-p filename)
+    (with-temp-file filename
+      (let ((print-length nil)
+            (print-level nil)
+            (print-circle nil))
+        (insert (prin1-to-string data))))))
+
+(defun projel--unserialize (filename)
+  "Read data serialized by `projel--serialize' from FILENAME."
+  (with-demoted-errors
+      "Error during file deserialization: %S"
+    (when (file-exists-p filename)
+      (with-temp-buffer
+        (insert-file-contents filename)
+        (read (buffer-string))))))
+
+(defun projel--read-projects-metadata ()
+  "Load the data from the file."
+  (let ((alist (and projel-metadata-file
+                    (file-readable-p projel-metadata-file)
+                    (projel--unserialize projel-metadata-file))))
+    (pcase-dolist (`(,k . ,v) alist)
+      (puthash k v projel-projects-metadata-cache))))
+
+(defun projel--write-metadata ()
+  "Write the data to the file."
+  (when (and projel-metadata-file
+             (not (hash-table-empty-p projel-projects-metadata-cache)))
+    (let ((parent-dir (file-name-directory projel-metadata-file)))
+      (unless (file-exists-p parent-dir)
+        (make-directory parent-dir t))
+      (projel--serialize
+       (let ((alist nil))
+         (maphash (lambda (k v)
+                    (push (cons (substring-no-properties k)
+                                (mapcar (lambda (it)
+                                          (if (stringp it)
+                                              (substring-no-properties it)
+                                            it))
+                                        v))
+                          alist))
+                  projel-projects-metadata-cache)
+         alist)
+       projel-metadata-file))))
+
 
 (defvar json-object-type)
 (defvar json-array-type)
 (defvar json-null)
 (defvar json-false)
-
-(defun projel-read-json-string (str &optional object-type array-type null-object
-                                    false-object)
-  "Parse STR with natively compiled function or with json library.
-
-The argument OBJECT-TYPE specifies which Lisp type is used
-to represent objects; it can be `hash-table', `alist' or `plist'.  It
-defaults to `alist'.
-
-The argument ARRAY-TYPE specifies which Lisp type is used
-to represent arrays; `array'/`vector' and `list'.
-
-The argument NULL-OBJECT specifies which object to use
-to represent a JSON null value.  It defaults to `:null'.
-
-The argument FALSE-OBJECT specifies which object to use to
-represent a JSON false value.  It defaults to `:false'."
-  (if (and (fboundp 'json-parse-string)
-           (fboundp 'json-available-p)
-           (json-available-p))
-      (json-parse-string str
-                         :object-type (or object-type 'alist)
-                         :array-type
-                         (pcase array-type
-                           ('list 'list)
-                           ('vector 'array)
-                           (_ 'array))
-                         :null-object (or null-object :null)
-                         :false-object (or false-object :false))
-    (when (progn
-            (require 'json nil t)
-            (fboundp 'json-read-from-string))
-      (let ((json-object-type (or object-type 'alist))
-            (json-array-type
-             (pcase array-type
-               ('list 'list)
-               ('array 'vector)
-               (_ 'vector)))
-            (json-null (or null-object :null))
-            (json-false (or false-object :false)))
-        (json-read-from-string str)))) )
 
 (defun projel-read-json-buffer (&optional object-type array-type null-object
                                           false-object)
@@ -1248,8 +1655,8 @@ represent a JSON false value.  It defaults to `:false'."
          ('list 'list)
          ('vector 'array)
          (_ 'array))
-       :null-object (or null-object :null)
-       :false-object (or false-object :false))
+       :null-object null-object
+       :false-object false-object)
     (when (progn
             (require 'json nil t)
             (fboundp 'json-read))
@@ -1259,9 +1666,9 @@ represent a JSON false value.  It defaults to `:false'."
                ('list 'list)
                ('array 'vector)
                (_ 'vector)))
-            (json-null (or null-object :null))
-            (json-false (or false-object :false)))
-        (json-read)))) )
+            (json-null null-object)
+            (json-false false-object))
+        (json-read)))))
 
 (defun projel-read-json (file)
   "Parse FILE with natively compiled function or with json library.
@@ -1310,27 +1717,24 @@ It checks whether current directory files includes first car in
         found)
        projel-file-extensions-indicators)))))
 
-(defvar projel-project-type-finders '(projel-find-project-type-by-files
-                                      projel-get-project-by-files-extensions))
 
 (defun projel-get-project-languages ()
   "Retrieve programming languages used in the current project directory."
+  (require 'github-linguist nil t)
   (when (fboundp 'github-linguist-lookup)
-    (github-linguist-lookup default-directory)))
+    (when-let ((langs (github-linguist-lookup default-directory)))
+      (mapconcat #'car (seq-filter (pcase-lambda (`(,_k . ,v))
+                                     (>= v 15))
+                                   langs)
+                 "/"))))
 
 (defun projel-get-project-type (project)
   "Determine PROJECT type by running hooks on project directory.
 
 Argument PROJECT is the directory or file path for which to determine the
 PROJECT type."
-  (let (target)
-    (run-hook-wrapped
-     'projel-project-type-finders
-     (lambda (fun dir)
-       (let ((default-directory dir))
-         (setq target (ignore-errors (funcall fun)))))
-     (file-name-as-directory (expand-file-name project)))
-    target))
+  (let ((default-directory (file-name-as-directory (expand-file-name project))))
+    (run-hook-with-args-until-success 'projel-project-type-finders)))
 
 (defun projel-get-readme-annotation ()
   "Try to find annotation from readme file in current directory."
@@ -1338,8 +1742,8 @@ PROJECT type."
     (projel-readme-annotation readmes)))
 
 (defvar projel-project-descriptions-finders
-  '(projel-get-readme-annotation
-    projel-get-package-json-description))
+  '(projel-get-package-json-description
+    projel-get-readme-annotation))
 
 (defun projel-get-from-package-json (file &rest keys)
   "Read json FILE and return list of values for KEYS."
@@ -1360,14 +1764,9 @@ PROJECT type."
   "Retrieve PROJECT descriptions using registered finder functions.
 
 Argument PROJECT is a string representing the path to the project directory."
-  (let (target)
-    (run-hook-wrapped
-     'projel-project-descriptions-finders
-     (lambda (fun dir)
-       (let ((default-directory dir))
-         (setq target (ignore-errors (funcall fun)))))
-     (file-name-as-directory (expand-file-name project)))
-    target))
+  (let ((default-directory (file-name-as-directory (expand-file-name project))))
+    (run-hook-with-args-until-success
+     'projel-project-descriptions-finders)))
 
 ;;;###autoload
 (defun projel-remove-all-projects ()
@@ -1404,15 +1803,18 @@ See `projel-auto-preview-delay'."
 Also setup auto preview if value of `projel-auto-preview-delay' is a number."
   (projel--setup-minibuffer projel-minibuffer-project-map))
 
-(defun projel-group-fn (str &optional transform)
+
+(defun projel-group-by-parent-directory (str &optional transform)
   "A function for grouping projects during the minibuffer completion.
+
 STR is a completion candidate, and TRANSFORM is a boolean flag.
+
 If TRANSFORM is nil, return the group title of the group to which the candidate
  belongs.  The returned title can also be nil.  Otherwise the function must
 return the transformed candidate."
   (pcase str
     ((guard (projel-project-action-candidate-p str))
-     (when transform str))
+     (if transform str "Actions"))
     ((guard (not transform))
      (propertize (abbreviate-file-name
                   (projel-file-name-parent-directory
@@ -1421,6 +1823,25 @@ return the transformed candidate."
                  'font-lock-constant-face))
     (_
      (file-name-nondirectory (directory-file-name str)))))
+
+(defun projel-group-by-project-type (str &optional transform)
+  "A function for grouping projects by type during minibuffer completion.
+
+STR is a completion candidate, and TRANSFORM is a boolean flag.
+
+If TRANSFORM is nil, return the group title of the group to which the candidate
+ belongs.  The returned title can also be nil.  Otherwise the function must
+return the transformed candidate."
+  (pcase str
+    ((guard (projel-project-action-candidate-p str))
+     (if transform str "Actions"))
+    ((guard (not transform))
+     (or
+      (plist-get (gethash str projel-projects-metadata-cache) :type)
+      (plist-get (gethash str projel-projects-cache) :type)
+      "Unknown"))
+    (_
+     str)))
 
 (defun projel-projects-action-candidates (&optional transform-fn)
   "Return completion candidates that indicates some action.
@@ -1557,7 +1978,9 @@ by the user at will.
             (if (> (length common-prefix) 0)
                 (file-name-directory common-prefix))))
          (cpd-length (length common-parent-directory))
-         (common-parent-directory (if (file-name-absolute-p (car all-files))
+         (common-parent-directory (if
+                                      (and (car all-files)
+                                           (file-name-absolute-p (car all-files)))
                                       common-parent-directory
                                     (concat default-directory
                                             common-parent-directory)))
@@ -1623,95 +2046,194 @@ by the user at will.
       (with-no-warnings
         (car (project-roots project))))))
 
-(defun projel-annotate-project-type (project-directory)
-  "Return propertized string with project type for PROJECT-DIRECTORY or nil."
-  (when-let ((str
-              (projel-get-project-type
-               project-directory)))
-    (propertize (truncate-string-to-width
-                 str
-                 projel-annotation-project-type-max-width
-                 nil ?\s t)
-                'face
-                'projel-project-type-annotation)))
 
-(defun projel-annotate-project-description (project-directory)
-  "Return propertized string with description for PROJECT-DIRECTORY or nil."
-  (when-let ((description (projel-get-project-descriptions project-directory)))
-    (propertize (truncate-string-to-width
-                 description
-                 projel-annotation-project-description-max-width
-                 nil nil t)
-                'face
-                'projel-project-description-annotation)))
+(defun projel--cache-projects-metadata (&optional transducer)
+  "Cache project metadata by updating project type and description if missing.
+
+Optional argument TRANSDUCER is a function that transforms the reducing
+function."
+  (let ((rf
+         (lambda (result proj)
+           (let* ((cache (gethash proj
+                                  projel-projects-cache))
+                  (saved-cache (gethash proj
+                                        projel-projects-metadata-cache))
+                  (proj-type (or
+                              (plist-get saved-cache :type)
+                              (plist-get cache :type)))
+                  (description (or (plist-get saved-cache :description)
+                                   (plist-get cache :description))))
+             (let ((new-type)
+                   (new-descr))
+               (unless proj-type
+                 (setq new-type (projel-get-project-type proj)))
+               (unless description
+                 (setq new-descr (projel-get-project-descriptions proj)))
+               (when (or new-type new-descr)
+                 (when new-type
+                   (setq cache (plist-put cache :type new-type)))
+                 (when new-descr
+                   (setq cache (plist-put cache :description new-descr)))
+                 (puthash proj cache projel-projects-cache))
+               (setq result
+                     (push (list
+                            :type proj-type
+                            :description description)
+                           result)))))))
+    (let ((final-rf (if transducer
+                        (funcall transducer rf)
+                      rf)))
+      (pcase-dolist (`(,proj . _) project--list)
+        (funcall final-rf nil proj)))))
 
 
-(defun projel-make-project-annotation-fn (alist)
+
+
+
+
+(defun projel--cache-projects-annotations ()
+  "Cache project annotations with metadata and formatting details."
+  (let ((longest-proj-name-len
+         (apply #'max
+                (mapcar #'length
+                        (projel-projects-action-candidates))))
+        (longest-time-str)
+        (time-formatter
+         (caddr (assq :modified-time
+                      projel-projects-annotations-columns)))
+        (timehash (make-hash-table :test #'equal))
+        (annotations-cache (make-hash-table :test #'equal))
+        (longest-type-len)
+        (longest-descr-len)
+        (minibuff-wind-width
+         (or (ignore-errors
+               (with-selected-window (minibuffer-window)
+                 (- (window-width)
+                    (length
+                     projel-projects-annotations-columns))))
+             120))
+        (widths))
+    (projel--cache-projects-metadata
+     (lambda (rf)
+       (lambda (result proj)
+         (let ((plist (car (funcall rf result proj))))
+           (when-let ((type (plist-get plist :type)))
+             (setq longest-type-len (max (or longest-type-len 0)
+                                         (length type))))
+           (when-let ((type (plist-get plist :description)))
+             (setq longest-descr-len (max (or longest-descr-len 0)
+                                          (length type)))))
+         (setq longest-proj-name-len (max
+                                      longest-proj-name-len
+                                      (length proj)))
+         (when time-formatter
+           (let ((time-str))
+             (setq time-str
+                   (funcall time-formatter
+                            (projel--file-modification-time proj)))
+             (setq longest-time-str (max (or longest-time-str
+                                             1)
+                                         (length time-str)))
+             (puthash proj time-str timehash))))))
+    (setq longest-proj-name-len (1+ longest-proj-name-len))
+    (setq minibuff-wind-width (- minibuff-wind-width longest-proj-name-len))
+    (setq widths (mapcar
+                  (pcase-lambda (`(,k ,width _))
+                    (min minibuff-wind-width
+                         (pcase width
+                           ('auto
+                            (cond ((eq k :modified-time)
+                                   longest-time-str)
+                                  ((eq k :type)
+                                   longest-type-len)
+                                  ((eq k :description)
+                                   longest-descr-len)
+                                  (t 1)))
+                           (_ width))))
+                  projel-projects-annotations-columns))
+    (let ((total (apply #'+ widths)))
+      (when (> total minibuff-wind-width)
+        (setq widths (mapcar
+                      (lambda (width)
+                        (let ((percentage (/ (* width 100.0) total)))
+                          (floor (/ (* percentage minibuff-wind-width) 100.0))))
+                      widths))))
+    (pcase-dolist (`(,proj . _) project--list)
+      (let ((pl (gethash proj projel-projects-cache))
+            (edited-pl (gethash proj projel-projects-metadata-cache))
+            (prefix (propertize " " 'display
+                                `(space :align-to ,longest-proj-name-len)))
+            (label)
+            (count 0))
+        (pcase-dolist (`(,k ,_width ,formatter . ,props)
+                       projel-projects-annotations-columns)
+          (let ((value (or (if (eq k :modified-time)
+                               (gethash proj timehash)
+                             (or (plist-get edited-pl k)
+                                 (plist-get pl k)))
+                           ""))
+                (width
+                 (nth count widths))
+                (formatted-val)
+                (col-label))
+            (setq formatted-val
+                  (truncate-string-to-width
+                   (if (eq k :modified-time)
+                       value
+                     (cond ((functionp formatter)
+                            (funcall formatter value))
+                           ((stringp formatter)
+                            (apply  #'format
+                                    formatter (list value)))
+                           (t (if (stringp value)
+                                  value
+                                ""))))
+                   (max width 1)
+                   nil ?\s t))
+            (setq col-label
+                  (if props
+                      (apply #'propertize
+                             (substring-no-properties formatted-val)
+                             props)
+                    formatted-val))
+            (setq label (concat label col-label " ")))
+          (setq count (1+ count)))
+        (puthash proj (concat prefix label)
+                 annotations-cache)))
+    annotations-cache))
+
+
+(defun projel-make-project-annotation-fn (_alist)
   "Create annotation function for projects ALIST.
-FMT is a format control string with 2 %s placeholders.
-CURRENT-PROJECT is a current project directory or nil.
-META-CANDIDATES is a list of strings that shouldn't be annotated."
-  (let* ((project-default-type
-          (make-string projel-annotation-project-type-max-width ?\s))
-         (meta-candidates (projel-projects-action-candidates))
-         (longest)
-         (time-formatter
-          (cond ((functionp
-                  projel-display-modified-time)
-                 projel-display-modified-time)
-                ((stringp projel-display-modified-time)
-                 (apply-partially #'format-time-string
-                                  projel-display-modified-time))))
-         (fmt))
-    (setq longest (if alist
-                      (+ 5
-                         (apply #'max (mapcar
-                                       (projel--compose
-                                         length
-                                         car)
-                                       alist)))
-                    10))
-    (setq fmt (concat
-               (propertize " " 'display
-                           `(space
-                             :align-to
-                             ,longest))
-               " %s"
-               (propertize " " 'display
-                           `(space
-                             :align-to
-                             ,(+ longest
-                               projel-annotation-project-type-max-width)))
-               " %s"))
-    (lambda (it)
-      (cond ((seq-find
-              (apply-partially #'string= it) meta-candidates)
-             "")
-            (t
-             (let ((proj-type (projel-annotate-project-type it))
-                   (descr
-                    (projel-annotate-project-description it)))
-               (if (and (not proj-type)
-                        (not descr))
-                   ""
-                 (format fmt
-                         (concat (or proj-type
-                                     project-default-type
-                                     " ")
-                                 " "
-                                 (when time-formatter
-                                   (funcall time-formatter
-                                            (projel--file-modification-time it)))
-                                 " ")
-                         (or
-                          descr
-                          "")))))))))
 
-(defun projel-project--file-completion-table (alist &optional annotate-fn)
+FMT is a format control string with 2 %s placeholders.
+
+CURRENT-PROJECT is a current project directory or nil.
+
+META-CANDIDATES is a list of strings that shouldn't be annotated."
+  (let ((anotations (projel--cache-projects-annotations))
+        (curr-proj (projel-current-project-root)))
+    (lambda (it)
+      (let ((label (gethash it anotations)))
+        (if (and curr-proj
+                 projel-selected-project-minibuffer-indicator
+                 (string= curr-proj it))
+            (cond ((facep projel-selected-project-minibuffer-indicator)
+                   (add-face-text-property 0 (length it)
+                                           projel-selected-project-minibuffer-indicator
+                                           t it)
+                   label)
+                  (t (concat
+                      label
+                      projel-selected-project-minibuffer-indicator)))
+          label)))))
+
+
+(defun projel--projects-completion-table (alist &optional annotate-fn)
   "Completion table for project ALIST of projects with annotations ANNOTATE-FN."
-  (let* ((annotfn (or annotate-fn
-                      (projel-make-project-annotation-fn alist)))
-         (meta (projel-projects-action-candidates))
+  (unless annotate-fn
+    (setq annotate-fn (projel-make-project-annotation-fn alist)))
+  (let* ((meta (projel-projects-action-candidates))
          (sort-fn (lambda (files)
                     (sort
                      files
@@ -1722,20 +2244,25 @@ META-CANDIDATES is a list of strings that shouldn't be annotated."
                              ((seq-find (apply-partially #'string= b) meta)
                               t)
                              (t (file-newer-than-file-p a b)))))))
-         (sorted-cands (sort alist
-                             (lambda (a b)
-                               (file-newer-than-file-p (car a)
-                                                       (car b))))))
+         (cands (mapcar (projel-cond
+                          [stringp identity]
+                          [t (projel--compose
+                               substring-no-properties
+                               car)])
+                        alist)))
+    (unless (eq completing-read-function 'completing-read-default)
+      (setq cands (funcall sort-fn cands)))
     (lambda (str pred action)
       (if (eq action 'metadata)
           `(metadata
-            (annotation-function . ,annotfn)
-            (group-function . projel-group-fn)
+            (annotation-function . ,annotate-fn)
+            (group-function . ,projel-minibuffer-group-fn)
             (display-sort-function . ,sort-fn)
-            (category . project-root))
-        (complete-with-action action sorted-cands str pred)))))
+            (category . project-file))
+        (complete-with-action action cands str pred)))))
 
 
+(defvar projel--projects-dir-history nil)
 
 (defun projel-completing-read-project (&rest _)
   "Prompt the user for a directory that is one of the known project roots.
@@ -1744,26 +2271,29 @@ see `project-list-file'.
 It's also possible to enter an arbitrary directory not in the list."
   (let* ((pr-dir "")
          (action)
-         (done)
-         (curr-proj (projel-current-project-root)))
+         (done))
     (projel-get-projects)
-    (while (setq action
-                 (unless done (catch 'action
-                                (minibuffer-with-setup-hook
-                                    #'projel-setup-projects-minibuffer
-                                  (completing-read "Select project: "
-                                                   (projel-project--file-completion-table
-                                                    (append
-                                                     project--list
-                                                     (projel-projects-action-candidates
-                                                      (projel--compose
-                                                        list
-                                                        substring-no-properties))))
-                                                   (when curr-proj
-                                                     (projel--compose
-                                                       not
-                                                       (apply-partially #'file-equal-p curr-proj)))
-                                                   t)))))
+    (while
+        (setq action
+              (unless done
+                (catch 'action
+                  (unwind-protect
+                      (progn
+                        (setq projel--reading-project t)
+                        (minibuffer-with-setup-hook
+                            #'projel-setup-projects-minibuffer
+                          (completing-read
+                           "Select project: "
+                           (projel--projects-completion-table
+                            (append
+                             project--list
+                             (projel-projects-action-candidates
+                              (lambda (it) (list (substring-no-properties it))))))
+                           nil
+                           t
+                           nil
+                           'projel--projects-dir-history)))
+                    (setq projel--reading-project nil)))))
       (cond ((or (listp action))
              (apply (car action)
                     (cdr action)))
@@ -1795,6 +2325,27 @@ be potentially pluralized."
                   (if (= count 1) "" "s"))))
 
 (defun projel-format-time-readable (time)
+  "Calculate and format the time difference from the current TIME.
+
+Argument TIME is the time value that will be compared with the current time to
+calculate the time difference."
+  (let ((diff-secs (-
+                    (float-time (current-time))
+                    (float-time time))))
+    (pcase-let ((`(,format-str . ,value)
+                 (cond ((< diff-secs 60)
+                        (cons "%d second" (truncate diff-secs)))
+                       ((< diff-secs 3600)
+                        (cons "%d minute" (truncate (/ diff-secs 60))))
+                       ((< diff-secs 86400)
+                        (cons "%d hour" (truncate (/ diff-secs 3600))))
+                       ((< diff-secs 2592000)
+                        (cons "%d day" (truncate (/ diff-secs 86400))))
+                       (t
+                        (cons "%d month" (truncate (/ diff-secs 2592000)))))))
+      (format (concat format-str (if (= value 1) " ago" "s ago")) value))))
+
+(defun projel-format-time-readable-long (time)
   "Format a human-readable string representing TIME difference.
 
 Argument TIME is a time value representing the number of seconds since the epoch
@@ -1879,40 +2430,6 @@ Argument TIME is a time value representing the number of seconds since the epoch
                      (directory-files dir t
                                       directory-files-no-dot-files-regexp))))))))
 
-(defun projel-current-files-to-alist (files &optional proj-root)
-  "Sort FILES by modification time and return as an associative list.
-
-Argument FILES is a list of FILES to be processed by the function.
-
-Optional argument PROJ-ROOT is a string representing the root directory of the
-project, with no default value."
-  (when proj-root (setq proj-root (file-name-directory
-                                   (abbreviate-file-name proj-root))))
-  (let ((len (and proj-root (length proj-root)))
-        (filtered-files)
-        (unexisting-files)
-        (max-len 0))
-    (while files
-      (let ((file (car files)))
-        (setq max-len (max max-len (length file)))
-        (if (not (file-exists-p file))
-            (push (list file) unexisting-files)
-          (let ((relative-file (if
-                                   (and proj-root len (string-prefix-p
-                                                       proj-root
-                                                       file))
-                                   (substring-no-properties file len)
-                                 file))
-                (mod-time (file-attribute-modification-time
-                           (file-attributes
-                            file))))
-            (push (cons relative-file mod-time) filtered-files))))
-      (setq files (cdr files)))
-    (cons max-len
-          (append (sort filtered-files
-                        (projel--use-with file-newer-than-file-p
-                                          [car car]))
-                  unexisting-files))))
 
 (defun projel--sort-files-alist (alist files)
   "Sort FILES based on their timestamps in ALIST.
@@ -1993,7 +2510,6 @@ Optional argument PROJ-ROOT is the root directory of the project."
             `(metadata
               (annotation-function . ,annotfn)
               (display-sort-function . ,sort-fn)
-              (group-function . projel-group-fn)
               (category . project-file))
           (complete-with-action action cands str pred))))))
 
