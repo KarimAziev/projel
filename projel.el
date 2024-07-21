@@ -488,6 +488,32 @@ the cdr is a list of project candidates belonging to that group."
           (const :tag "Don't group" nil)
           (function "Custom function")))
 
+(defcustom projel-file-sorting-threshold 5000
+  "Threshold for enabling sorting in project files.
+
+If the number of project files exceeds this threshold, sorting will be
+inhibited.
+
+Set this to nil to always allow sorting, or to a numeric value to
+specify the threshold."
+  :group 'projel
+  :type '(radio
+          (natnum :tag "Threshold")
+          (const :tag "Always allow sorting" nil)))
+
+(defcustom projel-file-annotation-threshold 5000
+  "Threshold for enabling annotations in project files.
+
+If the number of project files exceeds this threshold, annotations will be
+inhibited.
+
+Set this to nil to always allow annotations or to a numeric value to specify the
+threshold."
+  :group 'projel
+  :type '(radio
+          (natnum :tag "Threshold")
+          (const :tag "Always allow annotations" nil)))
+
 (defvar projel-projects-cache (make-hash-table :test #'equal))
 (defvar projel-projects-metadata-cache (make-hash-table :test #'equal))
 
@@ -1947,8 +1973,7 @@ Optional argument PREDICATE is a function to filter COLLECTION.
 Optional argument HIST is the history list to use.
 
 Optional argument MB-DEFAULT is the default value for the minibuffer."
-  (let ((table (projel--project-files-completion-table
-                collection)))
+  (let ((table (projel--project-files-completion-table collection)))
     (minibuffer-with-setup-hook
         (lambda ()
           (projel-setup-minibuffer)
@@ -2451,67 +2476,101 @@ Argument FILE is the path to the file whose modification time is needed."
   (file-attribute-modification-time (file-attributes file)))
 
 (defun projel--project-files-completion-table (files &optional proj-root)
-  "Create a completion table for project FILES, with annotations and sorting.
+  "Create a completion table for FILES with optional annotations and sorting.
 
-Argument FILES is a list of file paths to be processed.
+Argument FILES is a list of project file paths to be processed.
 
-Optional argument PROJ-ROOT is the root directory of the project."
-  (when proj-root (setq proj-root (file-name-directory
-                                   (abbreviate-file-name proj-root))))
+Optional argument PROJ-ROOT is the root directory of the project. If specified,
+file paths will be abbreviated relative to this directory.
+
+The behavior of the function is influenced by two customizable variables:
+
+- `projel-file-sorting-threshold': Specifies a threshold for sorting the file
+  list. If the number of files exceeds this threshold, sorting will be disabled.
+
+- `projel-file-annotation-threshold': Specifies a threshold for adding
+  annotations to the file list. If the number of files exceeds this threshold,
+  annotations will be disabled."
+  (when proj-root (setq proj-root (file-name-directory (abbreviate-file-name
+                                                        proj-root))))
   (let ((len (and proj-root (length proj-root)))
         (filtered-files)
         (unexisting-files)
         (max-len 0)
-        (cands))
-    (while files
-      (let ((file (car files)))
-        (cond ((not (file-exists-p file))
-               (push file unexisting-files)
-               (push file cands)
-               (setq max-len (max max-len (length file))))
-              (t
-               (let ((filename (or
-                                (and (file-name-absolute-p file)
-                                     (or
-                                      (and proj-root (string-prefix-p proj-root
-                                                                      file)
-                                           (substring-no-properties file len))
-                                      (let ((abbr-file
-                                             (abbreviate-file-name file)))
-                                        (and proj-root
-                                             (string-prefix-p proj-root
-                                                              abbr-file)
-                                             (substring-no-properties abbr-file
-                                                                      len)))))
-                                file)))
-                 (setq max-len (max max-len (1+ (length filename))))
-                 (push filename cands)
-                 (push (cons filename (projel--file-modification-time file))
-                       filtered-files)))))
-      (setq files (cdr files)))
-    (let ((annotfn (lambda (str)
-                     (or
-                      (if (member str unexisting-files)
-                          (concat
-                           (propertize " " 'display
-                                       `(space :align-to ,max-len))
-                           "Unknown")
-                        (when-let ((time (cdr (assoc str filtered-files))))
-                          (concat
-                           (propertize " " 'display `(space :align-to ,max-len))
-                           (projel-format-time-readable time))))
-                      "")))
-          (sort-fn (apply-partially #'projel--sort-files-alist
-                                    filtered-files)))
-      (unless (eq completing-read-function 'completing-read-default)
-        (setq cands (funcall sort-fn cands)))
-      (lambda (str pred action)
-        (if (eq action 'metadata)
-            `(metadata
-              (annotation-function . ,annotfn)
-              (display-sort-function . ,sort-fn)
-              (category . project-file))
-          (complete-with-action action cands str pred))))))
+        (cands)
+        (files-len (length files))
+        (allow-sorting)
+        (allow-annotations))
+    (setq allow-annotations
+          (or
+           (not projel-file-annotation-threshold)
+           (> projel-file-annotation-threshold files-len)))
+    (setq allow-sorting
+          (or (not projel-file-sorting-threshold)
+              (> projel-file-sorting-threshold files-len)))
+    (if (and (not allow-annotations)
+             (not allow-sorting))
+        (lambda (str pred action)
+          (if (eq action 'metadata)
+              `(metadata
+                (category . project-file))
+            (complete-with-action action files str pred)))
+      (while files
+        (let ((file (car files)))
+          (cond ((not (file-exists-p file))
+                 (push file unexisting-files)
+                 (push file cands)
+                 (setq max-len (max max-len (length file))))
+                (t
+                 (let ((filename (or
+                                  (and (file-name-absolute-p file)
+                                       (or
+                                        (and proj-root (string-prefix-p
+                                                        proj-root
+                                                        file)
+                                             (substring-no-properties file len))
+                                        (let ((abbr-file
+                                               (abbreviate-file-name file)))
+                                          (and proj-root
+                                               (string-prefix-p proj-root
+                                                                abbr-file)
+                                               (substring-no-properties
+                                                abbr-file
+                                                len)))))
+                                  file)))
+                   (setq max-len (max max-len (1+ (length filename))))
+                   (push filename cands)
+                   (push (cons filename (projel--file-modification-time file))
+                         filtered-files)))))
+        (setq files (cdr files)))
+      (let ((annotfn (and allow-annotations
+                          (lambda (str)
+                            (or
+                             (if (member str unexisting-files)
+                                 (concat
+                                  (propertize " " 'display
+                                              `(space :align-to ,max-len))
+                                  "Unknown")
+                               (when-let
+                                   ((time (cdr (assoc str filtered-files))))
+                                 (concat
+                                  (propertize " " 'display
+                                              `(space :align-to ,max-len))
+                                  (projel-format-time-readable time))))
+                             ""))))
+            (sort-fn (and allow-sorting
+                          (apply-partially #'projel--sort-files-alist
+                                           filtered-files))))
+        (unless (or (not sort-fn)
+                    (eq completing-read-function 'completing-read-default))
+          (setq cands (funcall sort-fn cands)))
+        (lambda (str pred action)
+          (if (eq action 'metadata)
+              `(metadata
+                (annotation-function . ,annotfn)
+                (display-sort-function . ,sort-fn)
+                (category . project-file))
+            (complete-with-action action cands str pred)))))))
 
 
 
