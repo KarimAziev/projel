@@ -710,7 +710,7 @@ Return the category metadatum as the type of the target."
     (run-hook-wrapped
      'projel-minibuffer-targets-finders
      (lambda (fun)
-       (when-let ((result (funcall fun)))
+       (when-let* ((result (funcall fun)))
          (when (and (cdr-safe result)
                     (stringp (cdr result))
                     (not (string-empty-p (cdr result))))
@@ -723,7 +723,7 @@ Return the category metadatum as the type of the target."
   (when (memq this-command '(minibuffer-next-completion
                              minibuffer-previous-completion))
     (remove-hook 'post-command-hook #'projel-restore-completions-wind)
-    (when-let ((win (get-buffer-window "*Completions*" 0)))
+    (when-let* ((win (get-buffer-window "*Completions*" 0)))
       (fit-window-to-buffer win completions-max-height))))
 
 (defun projel-current-minibuffer-file ()
@@ -750,7 +750,7 @@ Return the category metadatum as the type of the target."
 (defun projel-find-file-other-window ()
   "Invoke action to find selected file in minibuffer in other window."
   (interactive)
-  (when-let ((file (projel-current-minibuffer-file)))
+  (when-let* ((file (projel-current-minibuffer-file)))
     (run-with-timer 0 nil #'find-file-other-window file)
     (abort-minibuffers)))
 
@@ -758,7 +758,7 @@ Return the category metadatum as the type of the target."
 (defun projel-preview-file ()
   "Invoke action to preview current file in minibuffer in other window."
   (interactive)
-  (when-let ((file (projel-current-minibuffer-file)))
+  (when-let* ((file (projel-current-minibuffer-file)))
     (if (minibuffer-selected-window)
         (projel--preview-file file)
       (find-file file))))
@@ -808,7 +808,7 @@ as running find file hooks, starting lsp or eglot servers and so on."
 
 (defun projel--kill-preview-buffer ()
   "Kill the buffer with the name `projel-preview-buffer-name'."
-  (when-let ((buff (get-buffer projel-preview-buffer-name)))
+  (when-let* ((buff (get-buffer projel-preview-buffer-name)))
     (when (buffer-live-p buff)
       (kill-buffer buff))))
 
@@ -906,7 +906,7 @@ CURRENT-DEPTH is used for recoursive purposes."
                                        (funcall transform-fn full-dir)
                                      full-dir)
                                    found-dirs)))
-                     (when-let ((subdirs (projel-find-in-dir full-dir
+                     (when-let* ((subdirs (projel-find-in-dir full-dir
                                                              pattern
                                                              non-visit-pattern
                                                              max-depth
@@ -993,7 +993,7 @@ function from writing the updated project list to disk. It defaults to nil."
           (results))
       (dolist (dir (or dirs (list "~/")))
         (message "Rescanning %s" dir)
-        (when-let ((res
+        (when-let* ((res
                     (when (file-exists-p dir)
                       (projel-find-projects-in-dir
                        dir
@@ -1105,7 +1105,7 @@ to `default-directory', and the result will also be relative."
                           (with-no-warnings
                             (car (project-roots project))))))
         (when (equal proj root)
-          (when-let ((parent (projel-file-name-parent-directory root)))
+          (when-let* ((parent (projel-file-name-parent-directory root)))
             (while
                 (let ((default-directory parent))
                   (projel-current-project-root))
@@ -1275,7 +1275,7 @@ Argument MAP is a keymap or a list of keymaps to be formatted."
                   (seq-filter #'commandp
                               (flatten-list
                                map))))
-      (when-let ((key (projel--get-command-key sym)))
+      (when-let* ((key (projel--get-command-key sym)))
         (setq col-len (max (length key) col-len))
         (push (list key sym) alist)))
     (mapconcat
@@ -1361,7 +1361,7 @@ field."
   "Add a project from DIR to the project list if it exists.
 
 Argument DIR is the directory to search for a project."
-  (if-let ((pr (project--find-in-directory dir)))
+  (if-let* ((pr (project--find-in-directory dir)))
       (project-remember-project pr)
     (message "Project is not found in `%s'" (abbreviate-file-name dir))))
 
@@ -1372,7 +1372,7 @@ Argument DIR is the directory to search for a project."
          (parents)
          (dirs))
     (dolist (proj-dir projects-dirs)
-      (when-let ((parent (file-name-parent-directory proj-dir)))
+      (when-let* ((parent (file-name-parent-directory proj-dir)))
         (unless (member parent parents)
           (push parent parents))))
     (dolist (parent parents)
@@ -1425,7 +1425,7 @@ Optional argument DEFAULT-DIRNAME is the default directory name.
 
 Optional argument INITIAL is the initial input."
   (unless dir
-    (setq dir (if-let ((proj
+    (setq dir (if-let* ((proj
                         (projel-current-project-root)))
                   (projel-file-name-parent-directory proj)
                 default-directory)))
@@ -1467,7 +1467,7 @@ Optional argument INITIAL is the initial input."
 
 (defun projel-add-current-project-dir-to-projects-maybe ()
   "Add the current project directory to the project list if not already present."
-  (when-let ((pr (project--find-in-directory default-directory)))
+  (when-let* ((pr (project--find-in-directory default-directory)))
     (project--ensure-read-project-list)
     (unless (member (project-root pr) project--list)
       (project-remember-project pr)
@@ -1723,7 +1723,7 @@ It checks whether current directory files includes first car in
 
 (defun projel-get-project-by-files-extensions ()
   "Guess project type by file extension."
-  (when-let ((found
+  (when-let* ((found
               (seq-find
                (lambda (file)
                  (assoc-string
@@ -1748,7 +1748,7 @@ It checks whether current directory files includes first car in
   "Retrieve programming languages used in the current project directory."
   (require 'github-linguist nil t)
   (when (fboundp 'github-linguist-lookup)
-    (when-let ((langs (github-linguist-lookup default-directory)))
+    (when-let* ((langs (github-linguist-lookup default-directory)))
       (mapconcat #'car (seq-filter (pcase-lambda (`(,_k . ,v))
                                      (>= v 15))
                                    langs)
@@ -1764,7 +1764,7 @@ PROJECT type."
 
 (defun projel-get-readme-annotation ()
   "Try to find annotation from readme file in current directory."
-  (when-let ((readmes (projel-find-readme default-directory)))
+  (when-let* ((readmes (projel-find-readme default-directory)))
     (projel-readme-annotation readmes)))
 
 (defvar projel-project-descriptions-finders
@@ -1773,7 +1773,7 @@ PROJECT type."
 
 (defun projel-get-from-package-json (file &rest keys)
   "Read json FILE and return list of values for KEYS."
-  (when-let ((obj (ignore-errors (projel-read-json
+  (when-let* ((obj (ignore-errors (projel-read-json
                                   file))))
     (mapcar (lambda (key)
               (alist-get key obj))
@@ -2065,7 +2065,7 @@ by the user at will.
 
 (defun projel-current-project-root ()
   "Return project root directory."
-  (when-let ((project (ignore-errors (project-current))))
+  (when-let* ((project (ignore-errors (project-current))))
     (if (fboundp 'project-root)
         (project-root project)
       (with-no-warnings
@@ -2142,10 +2142,10 @@ function."
      (lambda (rf)
        (lambda (result proj)
          (let ((plist (car (funcall rf result proj))))
-           (when-let ((type (plist-get plist :type)))
+           (when-let* ((type (plist-get plist :type)))
              (setq longest-type-len (max (or longest-type-len 0)
                                          (length type))))
-           (when-let ((type (plist-get plist :description)))
+           (when-let* ((type (plist-get plist :description)))
              (setq longest-descr-len (max (or longest-descr-len 0)
                                           (length type)))))
          (setq longest-proj-name-len (max
@@ -2551,7 +2551,7 @@ The behavior of the function is influenced by two customizable variables:
                                   (propertize " " 'display
                                               `(space :align-to ,max-len))
                                   "Unknown")
-                               (when-let
+                               (when-let*
                                    ((time (cdr (assoc str filtered-files))))
                                  (concat
                                   (propertize " " 'display
