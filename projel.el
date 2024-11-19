@@ -2119,9 +2119,10 @@ function."
 (defun projel--cache-projects-annotations ()
   "Cache project annotations with metadata and formatting details."
   (let ((longest-proj-name-len
-         (apply #'max
-                (mapcar #'length
-                        (projel-projects-action-candidates))))
+         (if-let* ((actions (mapcar #'length
+                                    (projel-projects-action-candidates))))
+             (apply #'max actions)
+           40))
         (longest-time-str)
         (time-formatter
          (caddr (assq :modified-time
@@ -2167,13 +2168,14 @@ function."
                     (min minibuff-wind-width
                          (pcase width
                            ('auto
-                            (cond ((eq k :modified-time)
-                                   longest-time-str)
-                                  ((eq k :type)
-                                   longest-type-len)
-                                  ((eq k :description)
-                                   longest-descr-len)
-                                  (t 1)))
+                            (or (cond ((eq k :modified-time)
+                                       longest-time-str)
+                                      ((eq k :type)
+                                       longest-type-len)
+                                      ((eq k :description)
+                                       longest-descr-len)
+                                      (t 1))
+                                40))
                            (_ width))))
                   projel-projects-annotations-columns))
     (let ((total (apply #'+ widths)))
