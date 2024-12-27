@@ -1094,7 +1094,7 @@ to `default-directory', and the result will also be relative."
       parent))))
 
 (defun projel-get-projects-parent-dirs ()
-  "Return list of git parpents directories."
+  "Return a list of unique parent directories of current projects."
   (projel--ensure-read-project-list)
   (let ((parents))
     (pcase-dolist (`(,proj . ,_v) project--list)
