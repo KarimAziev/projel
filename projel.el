@@ -2329,6 +2329,9 @@ It's also possible to enter an arbitrary directory not in the list."
       (cond ((or (listp action))
              (apply (car action)
                     (cdr action)))
+            ((commandp (cdr (assoc action projel-projects-actions-alist)))
+             (call-interactively (cdr (assoc action
+                                             projel-projects-actions-alist))))
             ((cdr (assoc action projel-projects-actions-alist))
              (funcall (cdr (assoc action projel-projects-actions-alist))))
             (t (setq pr-dir action)))
