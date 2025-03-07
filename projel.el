@@ -1202,7 +1202,7 @@ If DIR or DEPTH is nil it will read DIR and DEPTH in minibuffer.
 If active minibuffer window exists throw the action
 `projel-find-projects-in-dir' with DIR and DEPTH, otherwise invoke this action
 with DIR and DEPTH."
-  (interactive (list (read-directory-name "Directory")
+  (interactive (list (read-directory-name "Directory: ")
                      (read-number "Max depth: ")))
   (if projel--reading-project
       (throw 'action (list #'projel-find-projects-in-dir dir depth))
@@ -2291,10 +2291,13 @@ META-CANDIDATES is a list of strings that shouldn't be annotated."
 
 (defvar projel--projects-dir-history nil)
 
-(defun projel-completing-read-project (&rest _)
+(defun projel-completing-read-project (&optional prompt &rest _)
   "Prompt the user for a directory that is one of the known project roots.
 The project is chosen among projects known from the project list,
 see `project-list-file'.
+
+When PROMPT is non-nil, use it as the prompt string.
+
 It's also possible to enter an arbitrary directory not in the list."
   (let* ((pr-dir "")
          (action)
@@ -2310,7 +2313,9 @@ It's also possible to enter an arbitrary directory not in the list."
                         (minibuffer-with-setup-hook
                             #'projel-setup-projects-minibuffer
                           (completing-read
-                           "Select project: "
+                           (if prompt
+                               (format "%s: " (substitute-command-keys prompt))
+                             "Select project: ")
                            (projel--projects-completion-table
                             (append
                              project--list
