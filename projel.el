@@ -967,6 +967,23 @@ Return alist of added projects."
              (length
               added))))
 
+
+(defun projel--maybe-format-list (results max-count &optional face)
+  "Return formatted string from RESULTS if its length is within MAX-COUNT.
+
+Argument RESULTS is a list whose elements are to be formatted.
+
+Argument MAX-COUNT is the maximum number of items permitted in RESULTS
+for processing to occur.
+
+Optional argument FACE is used to apply a face property to the
+formatted string if provided."
+  (when (<= (length results) max-count)
+    (let ((str (mapconcat (apply-partially #'format "%s") results ", ")))
+      (if (not face)
+          str
+        (propertize str 'face face)))))
+
 (defun projel-rescan-all (&optional depth no-write)
   "Rescan directories, update project list, and sync with Magit if enabled.
 
@@ -984,9 +1001,9 @@ function from writing the updated project list to disk. It defaults to nil."
     (setq dead-projects
           (when (> (length project--list)
                    (length existing-projects))
-            (-
-             (length project--list)
-             (length existing-projects))))
+            (seq-remove (pcase-lambda (`(,k . ,_))
+                          (assoc k existing-projects))
+                        project--list)))
     (when dead-projects
       (setq project--list existing-projects))
     (let ((dirs (projel-get-projects-parent-dirs))
@@ -994,14 +1011,14 @@ function from writing the updated project list to disk. It defaults to nil."
       (dolist (dir (or dirs (list "~/")))
         (message "Rescanning %s" dir)
         (when-let* ((res
-                    (when (file-exists-p dir)
-                      (projel-find-projects-in-dir
-                       dir
-                       (or depth
-                           (if dirs
-                               1
-                             projel-explore-project-depth))
-                       nil))))
+                     (when (file-exists-p dir)
+                       (projel-find-projects-in-dir
+                        dir
+                        (or depth
+                            (if dirs
+                                1
+                              projel-explore-project-depth))
+                        nil))))
           (setq results
                 (append results res))
           (when (and projel-allow-magit-repository-directories-sync
@@ -1010,16 +1027,35 @@ function from writing the updated project list to disk. It defaults to nil."
       (when (or dead-projects results)
         (unless no-write
           (projel--write-project-list))
-        (message
-         "Projel: %s"
-         (string-join
-          (delq nil
-                (list
-                 (when results
-                   (format "Added %d projects. " (length results)))
-                 (when dead-projects
-                   (format "Removed %d projects. " dead-projects))))
-          ""))))
+        (when-let* ((msg
+                     (delq nil
+                           (list
+                            (when results
+                              (let ((suffix
+                                     (projel--maybe-format-list
+                                      (mapcar #'car results) 3
+                                      'font-lock-constant-face))
+                                    (len (length results)))
+                                (concat (format "Added %d project%s"
+                                                len
+                                                (if (= len 1)
+                                                    ""
+                                                  "s"))
+                                        (when suffix ": ") suffix)))
+                            (when dead-projects
+                              (let ((suffix
+                                     (projel--maybe-format-list
+                                      (mapcar #'car dead-projects) 3
+                                      'font-lock-constant-face))
+                                    (len (length dead-projects)))
+                                (concat (format "Removed %d project%s"
+                                                (length dead-projects)
+                                                (if (= len 1)
+                                                    ""
+                                                  "s"))
+                                        (when suffix ": ") suffix)))))))
+          (setq msg (concat "Projel: " (string-join msg ", ")))
+          (message msg))))
     (clrhash projel-projects-cache)))
 
 (defun projel--write-project-list ()
