@@ -182,7 +182,7 @@ metadata to persist project information across sessions."
                                            ("*Add project*" . projel-add-project-directory)
                                            ("*Remove project*" . projel-remove-project)
                                            ("*Edit description*" . projel-edit-project-description)
-                                           ("*Edit project type" . projel-edit-project-type))
+                                           ("*Edit project type*" . projel-edit-project-type))
   "Alist of project action labels and their corresponding functions.
 
 An alist mapping action labels to their corresponding functions for
