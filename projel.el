@@ -2694,7 +2694,7 @@ This mode will set or reset next custom variables:
 
 If the variable `project-prompter' is not bound, it will advice
 `project-prompt-project-dir' instead."
-  :lighter " prjl"
+  :lighter " pr"
   :global t
   :group 'project
   (if projel-mode
