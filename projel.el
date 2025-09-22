@@ -1077,10 +1077,12 @@ function from writing the updated project list to disk. It defaults to nil."
     (project--read-project-list)))
 
 (defun projel-get-projects ()
-  "Init `project--list'.
-If `projel-auto-rescan-on-init' is enabled and `project--list' is not initted,
-rescan parent directories of projects.
-Also check and remove unexisting projects."
+  "Initialize the project list and metadata.
+
+If `projel-auto-rescan-on-init' is enabled and `project--list' is not
+initialized, rescan parent directories of projects.
+
+Also check and remove nonexistent projects."
   (unless projel--metadata-loaded
     (setq projel--metadata-loaded t)
     (projel--read-projects-metadata))
