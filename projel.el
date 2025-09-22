@@ -2072,7 +2072,7 @@ by the user at will.
             (setq substrings (cons "./" substrings))))
          (abs-cpd (expand-file-name common-parent-directory))
          (abs-cpd-length (length abs-cpd))
-         (relname (cl-letf* ((non-essential t) ;Avoid new Tramp connections.
+         (relname (cl-letf* ((non-essential t) ; Avoid new Tramp connections.
                              ((symbol-value hist)
                               (mapcan
                                (lambda (s)
