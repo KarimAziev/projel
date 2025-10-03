@@ -2329,17 +2329,27 @@ META-CANDIDATES is a list of strings that shouldn't be annotated."
 
 (defvar projel--projects-dir-history nil)
 
-(defun projel-completing-read-project (&optional prompt &rest _)
-  "Prompt the user for a directory that is one of the known project roots.
+(defun projel-completing-read-project (&optional prompt predicate require-known
+                                                 allow-empty &rest _)
+  "PROMPT user to select a project from a list with completion.
+
 The project is chosen among projects known from the project list,
 see `project-list-file'.
 
-When PROMPT is non-nil, use it as the prompt string.
+Optional argument PROMPT is a string used to prompt the user.
 
-It's also possible to enter an arbitrary directory not in the list."
+Optional argument PREDICATE is a function to filter the completion candidates.
+
+Optional argument REQUIRE-KNOWN is a boolean indicating if only known projects
+should be considered.
+
+Optional argument ALLOW-EMPTY is a boolean that allows an empty selection."
   (let* ((pr-dir "")
          (action)
-         (done))
+         (done)
+         (actions (projel-projects-action-candidates
+                   (lambda (it)
+                     (list (substring-no-properties it))))))
     (projel-get-projects)
     (while
         (setq action
@@ -2355,11 +2365,16 @@ It's also possible to enter an arbitrary directory not in the list."
                                (format "%s: " (substitute-command-keys prompt))
                              "Select project: ")
                            (projel--projects-completion-table
-                            (append
-                             project--list
-                             (projel-projects-action-candidates
-                              (lambda (it) (list (substring-no-properties it))))))
-                           nil
+                            (if require-known
+                                project--list
+                              (append
+                               project--list
+                               (projel-projects-action-candidates
+                                (lambda (it) (list (substring-no-properties it)))))))
+                           (and predicate
+                                (lambda (choice)
+                                  (or (member choice actions)
+                                      (funcall predicate choice))))
                            t
                            nil
                            'projel--projects-dir-history)))
@@ -2373,7 +2388,8 @@ It's also possible to enter an arbitrary directory not in the list."
             ((cdr (assoc action projel-projects-actions-alist))
              (funcall (cdr (assoc action projel-projects-actions-alist))))
             (t (setq pr-dir action)))
-      (setq done (not (string-empty-p pr-dir))))
+      (setq done (if allow-empty pr-dir
+                   (not (string-empty-p pr-dir)))))
     pr-dir))
 
 (defmacro projel-csetq (variable value)
