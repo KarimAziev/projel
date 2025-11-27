@@ -38,7 +38,12 @@
 
 (defcustom projel-projects-excluded-dirs '("~/Dropbox"
                                            "~/.cache"
-                                           "~/.cask")
+                                           "~/.cask"
+                                           "~/Library/"
+                                           "~/.zsh_sessions/"
+                                           "~/.Trash/"
+                                           "~/.cargo/"
+                                           "~/.dropbox/")
   "List of full directory names to omit when finding projects."
   :type '(repeat directory)
   :group 'projel)
