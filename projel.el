@@ -436,7 +436,7 @@ presence of specific files in the project's root directory."
                                                ("cabal" . "Haskel (Cabal)")
                                                ("cpp" . "C")
                                                ("h" . "C")
-                                               ("c" . "C"))
+                                               ("scad" . "OpenSCAD"))
   "Alist mapping file extensions to their corresponding project indicators.
 
 A list of file extensions and their corresponding project type
