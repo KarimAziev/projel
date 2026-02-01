@@ -352,7 +352,6 @@ The structure of each column specification is as follows:
                                          (("project.clj" ".midje.clj") . "Clojure")
                                          (("project.clj") . "Clojure")
                                          (("poetry.lock") . "Python Poetry")
-                                         (("pyproject.toml") . "Python Pyproject")
                                          (("Pipfile") . "Python Pipenv")
                                          (("setup.py") . "Python")
                                          (("requirements.txt") . "Python Pip")
@@ -886,8 +885,8 @@ CURRENT-DEPTH is used for recoursive purposes."
   (when (>= max-depth current-depth)
     (let ((non-essential t))
       (let ((found-dirs))
-        (let
-            ((default-directory (expand-file-name (file-name-as-directory dir))))
+        (let ((default-directory (expand-file-name
+                                  (file-name-as-directory dir))))
           (dolist
               (curr
                (directory-files default-directory nil
@@ -912,11 +911,11 @@ CURRENT-DEPTH is used for recoursive purposes."
                                      full-dir)
                                    found-dirs)))
                      (when-let* ((subdirs (projel-find-in-dir full-dir
-                                                             pattern
-                                                             non-visit-pattern
-                                                             max-depth
-                                                             transform-fn
-                                                             current-depth)))
+                                                              pattern
+                                                              non-visit-pattern
+                                                              max-depth
+                                                              transform-fn
+                                                              current-depth)))
                        (setq found-dirs
                              (if found-dirs
                                  (nconc
@@ -1166,25 +1165,57 @@ to `default-directory', and the result will also be relative."
 
 
 ;;;###autoload
-(defun projel-remove-project (&optional project-dir)
-  "Dispatch or perform action to remove PROJECT-DIR from the project list.
+(defun projel-remove-project (project-dir &optional should-save)
+  "Dispatch or perform an action to remove PROJECT-DIR from the project list.
 
-If active minibuffer window exists it will throw list with
-`project--remove-from-project-list' and currently selected minibuffer project.
+PROJECT-DIR is the directory of the project to remove.
 
-If no active minibuffer window exists, it will remove directory PROJECT-DIR
-of a missing project from the project list. If PROJECT-DIR is nil,
-it will read project in minibuffer."
-  (interactive (list (projel--read-project-for-action)))
+Optional argument SHOULD-SAVE, if non-nil, causes PROJECT-DIR to be added to
+`projel-projects-excluded-dirs'.
+
+If the variable `projel--reading-project' is non-nil, this throws a list whose
+first element is an action function and whose second and third elements are
+that function's arguments: the project directory and a report message.
+
+If `projel--reading-project' is nil, the function removes PROJECT-DIR from
+the project list."
+  (interactive
+   (let ((proj (projel--read-project-for-action)))
+     (list proj
+           (unless (member proj projel-projects-excluded-dirs)
+             (funcall (if (fboundp 'y-or-n-p)
+                          #'y-or-n-p
+                        #'yes-or-no-p)
+                      (format
+                       "Save %s to the custom variable `projel-projects-excluded-dirs'?"
+                       (abbreviate-file-name proj)))))))
   (if projel--reading-project
-      (throw 'action (list 'project--remove-from-project-list
-                           (or project-dir
-                               (projel--read-project-for-action))
-                           "Project `%s' removed from known projects"))
+      (throw 'action (list (if should-save
+                               (lambda (prj report-msg)
+                                 (project--remove-from-project-list
+                                  prj
+                                  report-msg)
+                                 (customize-save-variable
+                                  'projel-projects-excluded-dirs
+                                  (append
+                                   projel-projects-excluded-dirs
+                                   (list
+                                    prj))
+                                  "Saved by projel"))
+                             'project--remove-from-project-list)
+                           project-dir
+                           (format "Project `%s' removed from known projects."
+                                   project-dir)))
     (project--remove-from-project-list
-     (or project-dir
-         (projel--read-project-for-action))
-     "Project `%s' removed from known projects")))
+     project-dir
+     "Project `%s' removed from known projects.")
+    (when should-save
+      (customize-save-variable 'projel-projects-excluded-dirs
+                               (append
+                                projel-projects-excluded-dirs
+                                (list
+                                 project-dir))
+                               "Saved by projel"))))
 
 
 ;;;###autoload
